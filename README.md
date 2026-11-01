@@ -3,9 +3,9 @@
 Uma faixa de uma linha só, acima da caixa de texto do Claude Code, com o uso do seu plano:
 
 ```
-Larga:    5h ━━━━━━━━━━━━ 94% ↗ · Renova em 1h46 · Semana 20% · Renova em 3d · (62) · ◉ Quente
-Média:    5h ━━━━━━ 94% ↗ · 1h46 · Semana 20% · 3d · (62) · ◉
-Estreita: 5h 94% ↗ 1h46 7d 20% 3d (62) ◉
+Larga:    5h ━━━━━━━━━━━━ 94% ↗   Renova em 1h46   Semana 20%   (62)   ◉ Quente
+Média:    5h ━━━━━━ 94% ↗   1h46   Semana 20%   (62)   ◉
+Estreita: 5h 94% ↗  1h46  7d 20%  (62)  ◉
 ```
 
 `(62)` é o anel de contexto. No app desktop ele é um anel de progresso com o número dentro; no terminal, um símbolo (`○ ◔ ◑ ◕ ●`) seguido do número.
@@ -17,8 +17,7 @@ Estreita: 5h 94% ↗ 1h46 7d 20% 3d (62) ◉
 | **5h** barra + % | Quanto da janela de 5 horas já foi usado. Barra azul, laranja a partir de 75%, vermelha a partir de 90%. | Clique ou foco: detalhes e hora da última atualização. |
 | **Ritmo** `→ ↗ ↑` | Ritmo de consumo da janela de 5 h (critérios abaixo). | Hover ou foco: "Ritmo normal", "Ritmo elevado" ou "Ritmo muito elevado". |
 | **Renovação das 5 h** | Três opções: *Renova em 1h46*, *Renova às 13:46* e *Semana renova qua*. | Clique alterna entre as três; a escolha fica salva. |
-| **Semana %** | Quanto do limite semanal já foi usado. | Clique ou foco: detalhes. |
-| **Renovação semanal** | *Renova em 3d* ou *Renova qua 17:00*. | Clique alterna; os detalhes mostram data e hora completas. |
+| **Semana %** | Quanto do limite semanal já foi usado. | Clique ou foco: detalhes, com data e hora completas da renovação semanal. |
 | **Anel de contexto** | Quanto da janela de contexto a conversa ocupa. | Hover ou foco: "Contexto: X% ocupado". |
 | **Cache** `◉ ◐ ○ ◌` | Estado do cache de prompt: quente, morno, frio ou sem registro. | Hover ou foco: o que o estado significa. |
 
@@ -65,10 +64,12 @@ A faixa escolhe o nível pela largura da **própria faixa** (`bodyColumns`), res
 
 | Nível | Precisa de | O que muda |
 | --- | --- | --- |
-| Larga | ~98 colunas | rótulos completos, barra de 12, texto do cache |
-| Média | ~68 colunas | barra de 6, tempos curtos, só o símbolo do cache |
-| Estreita | ~57 colunas | sem barra, `7d` em vez de *Semana* |
-| Compacta | ~38 colunas | sem separadores; a renovação semanal por data mostra só o dia |
+| Larga | ~73 colunas | rótulos completos, barra de 12, texto do cache |
+| Média | ~50 colunas | barra de 6, tempos curtos, só o símbolo do cache |
+| Estreita | ~39 colunas | sem barra, `7d` em vez de *Semana* |
+| Compacta | ~32 colunas | espaçamento mínimo |
+
+No app desktop, os botões são nativos e ocupam mais que as células de texto, por isso a faixa reserva 12 colunas a mais antes de escolher o nível. Os valores usam largura **mínima**, nunca fixa, para nunca serem cortados.
 
 Números com largura fixa (`tabular-nums` e larguras reservadas) evitam que a faixa "dance" quando um tempo passa de `1h00` para `59m`. As animações (barra enchendo e bolinha pulsando) respeitam a preferência de movimento reduzido do sistema.
 

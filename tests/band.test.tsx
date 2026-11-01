@@ -255,13 +255,12 @@ test('larga mostra rótulos completos e texto do cache', async ($, on) => {
   const line = visible(await ui.drawn())
   expect(line.includes('Renova em 1h46')).toBe(true)
   expect(line.includes('Semana')).toBe(true)
-  expect(line.includes('Renova em 3d')).toBe(true)
   expect(line.includes('Quente')).toBe(true)
   await ui.unmount()
 })
 
 test('estreita: sem barra, rótulos curtos, só o símbolo do cache', async ($, on) => {
-  const ui = await mount($, on, { columns: 52 })
+  const ui = await mount($, on, { columns: 36 })
   const line = visible(await ui.drawn())
   expect(line.includes('━')).toBe(false)
   expect(line.includes('7d')).toBe(true)
@@ -295,10 +294,12 @@ test('preferência antiga (4ª opção removida) continua válida', async ($, on
   await ui.unmount()
 })
 
-test('renovação semanal alterna para data e horário', async ($, on) => {
-  const ui = await mount($, on, { columns: 120, weekSlot: 1 })
-  const b: any = await ui.find({ type: 'Button', key: 'weekRenew' })
-  expect(/^Renova \S+ \d\d:\d\d$/.test(b.props.label)).toBe(true)
+test('detalhes da semana trazem a renovação completa', async ($, on) => {
+  const ui = await mount($, on, { columns: 120, focus: 'week' })
+  const card = (await ui.drawn()).children.find((c: any) => c?.props?.position === 'absolute' && c.props.display === 'flex')
+  const text = visible({ ...card, props: {} })
+  console.log('semana:', text)
+  expect(/renova \S+, \d+ de \S+/.test(text)).toBe(true)
   await ui.unmount()
 })
 
@@ -365,7 +366,7 @@ test('cartões de cada item', async ($, on) => {
   const texts = cards.map((c: any) => visible({ ...c, props: {} }))
   expect(texts.includes('Contexto: 62% ocupado')).toBe(true)
   expect(texts.some((t: string) => t.startsWith('Estado do cache: quente ·'))).toBe(true)
-  expect(texts.some((t: string) => t.startsWith('Renovação semanal:'))).toBe(true)
+  expect(texts.some((t: string) => t.startsWith('Limite semanal: 20% usado · renova '))).toBe(true)
   await ui.unmount()
 })
 
@@ -373,7 +374,7 @@ test('todo item clicável é um Button (alcançável por teclado)', async ($, on
   const ui = await mount($, on, { columns: 120 })
   const keys = (await ui.findAll({ type: 'Button' })).map((b: any) => b.key)
   console.log('botões:', keys.join(', '))
-  for (const k of ['five', 'pace', 'slot', 'week', 'weekRenew', 'ctx', 'cacheGlyph', 'cache']) expect(keys.includes(k)).toBe(true)
+  for (const k of ['five', 'pace', 'slot', 'week', 'ctx', 'cacheGlyph', 'cache']) expect(keys.includes(k)).toBe(true)
   await ui.unmount()
 })
 
@@ -381,7 +382,7 @@ test('todo item clicável é um Button (alcançável por teclado)', async ($, on
 const later = Date.parse(FIVE.resetsAt) + 10 * 60_000
 const EXTRA: [string, Scenario][] = [
   ['foco-cache', { columns: 120, focus: 'cache' }],
-  ['foco-semana', { columns: 70, focus: 'weekRenew' }],
+  ['foco-semana', { columns: 70, focus: 'week' }],
   ['desatualizado', { columns: 120, now: later, measuredMinAgo: 120 }],
   ['atualizando', { columns: 120, now: later, measuredMinAgo: 120, working: true }],
   ['falha', { columns: 120, now: later, measuredMinAgo: 120, failure: { at: later - 60_000, reason: 'turn.error' } }],
@@ -390,6 +391,9 @@ const EXTRA: [string, Scenario][] = [
   ['ritmo-alto-frio', { columns: 120, pace: 'high', lastMin: 300, ctx: 100 }],
   ['calculando-trabalhando', { columns: 120, pace: 'calculating', working: true, ctx: 37 }],
   ['opcoes-alternadas', { columns: 120, slot: 1, weekSlot: 1 }],
+  ['macbook-85', { columns: 85 }],
+  ['macbook-85-semdados', { columns: 85, five: null, week: null, ctx: null, lastMin: null }],
+  ['macbook-60', { columns: 60 }],
 ]
 for (const [name, sc] of EXTRA) {
   test(`prévia ${name}`, async ($, on) => {

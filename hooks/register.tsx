@@ -251,7 +251,6 @@ export const reserve = (m: Model, tier: Tier) => {
     fresh: 1,
     slot: maxLen(slotLabels(m, tier)),
     weekLabel: short ? 2 : 6, // "7d" | "Semana"
-    weekRenew: maxLen(weekLabels(m, tier)),
     ctx: 3,
     cacheLabel: tier === 'wide' ? 7 : 0, // "Quente "
     cacheG: 2,
@@ -260,11 +259,11 @@ export const reserve = (m: Model, tier: Tier) => {
 
 export const needed = (m: Model, tier: Tier): number => {
   const r = reserve(m, tier)
-  const gap = tier === 'tight' ? 1 : 3 // " · "
-  const five = r.fiveLabel + 1 + (r.bar ? r.bar + 1 : 0) + r.pct + 1 + r.paceG + r.fresh
-  const week = r.weekLabel + 1 + r.pct + r.fresh
+  const gap = tier === 'tight' ? 1 : 2
+  const five = r.fiveLabel + 1 + (r.bar ? r.bar + 1 : 0) + r.pct + 1 + r.paceG
+  const week = r.weekLabel + 1 + r.pct
   const cache = r.cacheG + (r.cacheLabel ? r.cacheLabel + 1 : 0)
-  return 2 + five + gap + r.slot + gap + week + gap + r.weekRenew + gap + r.ctx + gap + cache
+  return 2 + five + gap + r.slot + gap + week + gap + r.ctx + gap + cache
 }
 
 export const pickTier = (m: Model, columns: number): Tier => TIERS.find(t => needed(m, t) <= columns) ?? 'tight'
@@ -442,13 +441,6 @@ async function cycleSlot($: EngineInterface) {
   await showCard($, 'slot')
 }
 
-async function cycleWeek($: EngineInterface) {
-  await update($, weekSlot, n => (n + 1) % 2)
-  try {
-    await $.store.set('pref:weekSlot', await read($, weekSlot))
-  } catch {}
-  await showCard($, 'weekRenew')
-}
 
 // =====================================================================
 // Registro
@@ -469,8 +461,6 @@ export const register: Register = on => {
       // Preferências de exibição guardadas entre sessões.
       const s = await $.store.get('pref:slot')
       if (typeof s === 'number') await update($, slot, () => s)
-      const w = await $.store.get('pref:weekSlot')
-      if (typeof w === 'number') await update($, weekSlot, () => w)
     } catch {}
     $.clock.every(MIN, () => update($, tick, n => n + 1))
     return result
@@ -533,7 +523,8 @@ export const register: Register = on => {
       paceLevel: u.five && fiveFresh === 'ok' ? paceState.level : 'calculating',
       slotIdx, weekIdx, temp, fiveFresh, weekFresh,
     }
-    const tier = pickTier(model, e.props.bodyColumns)
+    // No desktop os botões são nativos e ocupam mais que as células do texto.
+    const tier = pickTier(model, e.props.bodyColumns - (Svg ? 12 : 0))
     const r = reserve(model, tier)
     const wide = tier === 'wide'
     const short = tier === 'narrow' || tier === 'tight'
@@ -564,19 +555,19 @@ export const register: Register = on => {
           wide && 'clique para alternar',
         )
         : 'Renovação das 5 h: horário ainda não informado pela fonte',
-      week: u.week ? join(`Limite semanal: ${weekPct} usado`, FRESH_VIEW[weekFresh].note, updated) : noWeek,
-      weekRenew: u.week?.resetsAt
+      week: u.week
         ? join(
-          weekLeft === 0 ? `Renovação semanal: renovou ${fullDate(u.week.resetsAt)}` : `Renovação semanal: ${fullDate(u.week.resetsAt)}, em ${fmtLong(weekLeft ?? 0)}`,
-          wide && 'clique para alternar',
+          `Limite semanal: ${weekPct} usado`,
+          u.week.resetsAt && (weekLeft === 0 ? `renovou ${fullDate(u.week.resetsAt)}` : `renova ${fullDate(u.week.resetsAt)}, em ${fmtLong(weekLeft ?? 0)}`),
+          FRESH_VIEW[weekFresh].note,
+          updated,
         )
-        : 'Renovação semanal: horário ainda não informado pela fonte',
+        : noWeek,
       ctx: ctxPct === null ? 'Contexto: sem leitura ainda (chega com a próxima resposta)' : `Contexto: ${Math.round(ctxPct)}% ocupado`,
       cache: temp.detail,
     }
 
     // ---------- peças ----------
-    const sep = tier === 'tight' ? null : <Text color="subtle">·</Text>
     const tipScope = (k: string) => `usage-band-tip-${k}`
     const hoverable = (k: string, child: RenderChildren) => (
       <Box key={`hv-${k}`} hover={{ scope: tipScope(k) }} flexDirection="row" alignItems="center" flexShrink={0}>
@@ -584,10 +575,11 @@ export const register: Register = on => {
       </Box>
     )
     const fixed = (w: number, child: RenderChildren, align: 'flex-start' | 'flex-end' = 'flex-start') => (
-      <Box width={w} flexShrink={0} flexDirection="row" justifyContent={align}>{child}</Box>
+      <Box minWidth={w} flexShrink={0} flexDirection="row" justifyContent={align}>{child}</Box>
     )
+    // Só ocupa espaço quando há aviso.
     const freshMark = (fr: Freshness) =>
-      fixed(r.fresh, FRESH_VIEW[fr].glyph ? <Text color={FRESH_VIEW[fr].color}>{FRESH_VIEW[fr].glyph}</Text> : <Text> </Text>)
+      FRESH_VIEW[fr].glyph ? <Text color={FRESH_VIEW[fr].color}>{FRESH_VIEW[fr].glyph}</Text> : null
 
     // 5h
     const fiveDim = fiveFresh !== 'ok'
@@ -609,10 +601,10 @@ export const register: Register = on => {
         ) : null}
         {hoverable('five', fixed(r.pct,
           <Button key="five" plain label={fivePct} dimColor={fiveDim} onPress={() => showCard($, 'five')} />, 'flex-end'))}
-        {hoverable('pace', fixed(r.paceG,
+        {u.five && fiveFresh === 'ok' ? hoverable('pace', fixed(r.paceG,
           <Button key="pace" plain onPress={() => showCard($, 'pace')}>
-            <Text color={u.five && fiveFresh === 'ok' ? paceV.color : 'inactive'}>{u.five && fiveFresh === 'ok' ? paceV.glyph : ' '}</Text>
-          </Button>))}
+            <Text color={paceV.color}>{paceV.glyph}</Text>
+          </Button>)) : null}
         {freshMark(fiveFresh)}
       </Box>
     )
@@ -632,10 +624,6 @@ export const register: Register = on => {
         {freshMark(weekFresh)}
       </Box>
     )
-    const wLabels = weekLabels(model, tier)
-    const weekRenewBlock = hoverable('weekRenew', fixed(r.weekRenew,
-      <Button key="weekRenew" plain dimColor label={wLabels[weekIdx % 2]} onPress={() => cycleWeek($)} />))
-
     // Contexto: anel de progresso com o número dentro.
     const ctxBlock = hoverable('ctx', Svg ? (
       <Svg source={ringSvg(ctxPct)} alt={ctxPct === null ? 'Contexto: sem leitura' : `Contexto: ${Math.round(ctxPct)}% ocupado`} />
@@ -685,15 +673,9 @@ export const register: Register = on => {
       <Box position="relative" flexDirection="row" flexWrap="nowrap" justifyContent="space-between" alignItems="center"
         paddingX={1} width="100%" overflow="hidden">
         {fiveBlock}
-        {sep}
         {slotBlock}
-        {sep}
         {weekBlock}
-        {sep}
-        {weekRenewBlock}
-        {sep}
         {ctxBlock}
-        {sep}
         {cacheBlock}
         {cards}
       </Box>
