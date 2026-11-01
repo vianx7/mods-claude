@@ -1,0 +1,5 @@
+{
+  "name": "mods-claude",
+  "owner": { "name": "vianx7" },
+  "plugins": [{ "name": "usage-band", "source": "./" }]
+}
