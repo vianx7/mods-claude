@@ -1,6 +1,6 @@
 {
   "name": "usage-band",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Faixa acima do prompt com uso da janela de 5h, horário de reset e % semanal",
   "types": "./types/index.d.ts",
   "license": "MIT",
