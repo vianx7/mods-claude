@@ -1,15 +1,14 @@
 # usage-band
 
-Uma faixa discreta acima da caixa de texto do Claude Code que mostra o uso do seu plano:
+Uma faixa de uma linha só, acima da caixa de texto do Claude Code que mostra o uso do seu plano:
 
 ```
-5 h  ━━━━────────  34%   Renova em 2 h 17 min   Semana  12%          Contexto  ━━━───  42%  84k   ● Quente  esfria em 50 min
+5 h  ━━━━━───────  43%      Renova em 37 min      Semana  6%      ● Quente
 ```
 
 - **5 h**: quanto da janela de 5 horas já foi usado. A barra fica azul no dia a dia, âmbar a partir de 75% e vermelha a partir de 90%.
 - **Renova em**: quanto falta para a janela de 5 horas reiniciar. A contagem anda a cada minuto.
 - **Semana**: a porcentagem do limite semanal.
-- **Contexto**: quanto da janela de contexto a conversa já ocupa, com o total de tokens.
 - **● Quente / Morno / Frio**: se o cache da conversa ainda está vivo. O cache dura 1 hora depois da última resposta.
   - 🔴 **Quente** (menos de 45 min): mandar mensagem agora sai barato, o contexto é relido do cache.
   - 🟡 **Morno** (45 a 60 min): ainda está no cache, mas expira em breve.

@@ -1,11 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit, SessionUsage } from 'claude-code'
 
-import type { Ctx, Limit, Usage } from '../types'
+import type { Limit, Usage } from '../types'
 
 const usage = atom({ plugin: 'usage-band', key: 'usage' } as const, { five: null, week: null } as Usage)
-const ctx = atom({ plugin: 'usage-band', key: 'ctx' } as const, { percent: null, tokens: null } as Ctx)
 const lastReply = atom({ plugin: 'usage-band', key: 'lastReply' } as const, null as number | null)
+const hasContext = atom({ plugin: 'usage-band', key: 'hasContext' } as const, false)
 const tick = atom({ plugin: 'usage-band', key: 'tick' } as const, 0)
 
 // O cache de prompt do Claude Code (assinatura) dura 1 h a partir da última resposta.
@@ -38,9 +38,6 @@ const untilReset = (resetsAt: string | undefined, now: number): string | null =>
   return fmtDuration(Math.ceil(ms / MIN))
 }
 
-const fmtTokens = (t: number): string =>
-  t >= 1_000_000 ? `${(t / 1_000_000).toFixed(1)}M` : t >= 1000 ? `${Math.round(t / 1000)}k` : `${t}`
-
 // Cores no estilo do sistema da Apple.
 const NEON_RED = '#FF375F'
 const AMBER = '#FFD60A'
@@ -70,7 +67,7 @@ async function storeKey($: EngineInterface) { return `lastReply:${await $.sessio
 
 async function absorb($: EngineInterface, u: Pick<SessionUsage, 'rateLimits' | 'context'>) {
   await update($, usage, () => ({ five: pick(u.rateLimits, 'five_hour'), week: pick(u.rateLimits, 'seven_day') }))
-  await update($, ctx, () => ({ percent: u.context.percent ?? null, tokens: u.context.tokens ?? null }))
+  await update($, hasContext, () => (u.context.tokens ?? 0) > 0)
 }
 
 async function markReply($: EngineInterface) {
@@ -109,63 +106,51 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const [u, c, last] = await Promise.all([read($, usage), read($, ctx), read($, lastReply)])
+    const [u, ctxFilled, last] = await Promise.all([read($, usage), read($, hasContext), read($, lastReply)])
     await read($, tick)
     const now = await $.clock.now()
     const { Box, Text } = $.ui.resolve(e)
 
-    const wide = e.props.bodyColumns >= 100
-    const temp = temperature(last, (c.tokens ?? 0) > 0, now)
+    const compact = e.props.bodyColumns < 72
+    const temp = temperature(last, ctxFilled, now)
     const five = u.five
     const week = u.week
     const reset = five ? untilReset(five.resetsAt, now) : null
     const label = (s: string) => <Text color="inactive" size="footnote">{s}</Text>
+    const bar = compact ? 8 : BAR
 
-    const left = five ? (
-      <Box flexDirection="row" columnGap={3}>
-        <Text>
-          {label('5 h  ')}
-          <Text color={tint(five.percentUsed)}>{'━'.repeat(cells(five.percentUsed))}</Text>
-          <Text color="subtle">{'─'.repeat(BAR - cells(five.percentUsed))}</Text>
-          <Text weight="semibold" tabular>  {Math.round(five.percentUsed)}%</Text>
-        </Text>
-        {reset ? <Text color="inactive" size="footnote" tabular>Renova em {reset}</Text> : null}
+    const dot = (
+      <Text>
+        <Text color={temp.color}>● </Text>
+        <Text color={temp.color} weight="semibold">{temp.label}</Text>
+      </Text>
+    )
+
+    // Uma linha só; os itens se distribuem por igual de ponta a ponta.
+    return (
+      <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={1} width="100%">
+        {five ? (
+          <Text>
+            {label('5 h  ')}
+            <Text color={tint(five.percentUsed)}>{'━'.repeat(cells(five.percentUsed, bar))}</Text>
+            <Text color="subtle">{'─'.repeat(bar - cells(five.percentUsed, bar))}</Text>
+            <Text weight="semibold" tabular>  {Math.round(five.percentUsed)}%</Text>
+          </Text>
+        ) : (
+          <Text color="inactive" size="footnote">Uso aparece após a próxima resposta</Text>
+        )}
+        {reset ? (
+          <Text color="inactive" size="footnote" tabular>{compact ? `↻ ${reset}` : `Renova em ${reset}`}</Text>
+        ) : null}
         {week ? (
           <Text>
-            {label('Semana  ')}
-            <Text color={week.percentUsed >= 90 ? 'error' : week.percentUsed >= 75 ? 'warning' : 'text'} tabular>
+            {label(compact ? 'Sem.  ' : 'Semana  ')}
+            <Text color={week.percentUsed >= 90 ? 'error' : week.percentUsed >= 75 ? 'warning' : 'text'} weight="semibold" tabular>
               {Math.round(week.percentUsed)}%
             </Text>
           </Text>
         ) : null}
-      </Box>
-    ) : (
-      <Text color="inactive" size="footnote">Uso do plano aparece após a próxima resposta</Text>
-    )
-
-    const right = (
-      <Box flexDirection="row" columnGap={3}>
-        {c.percent !== null ? (
-          <Text>
-            {label('Contexto  ')}
-            <Text color={tint(c.percent)}>{'━'.repeat(cells(c.percent, 6))}</Text>
-            <Text color="subtle">{'─'.repeat(6 - cells(c.percent, 6))}</Text>
-            <Text tabular>  {Math.round(c.percent)}%</Text>
-            {wide && c.tokens ? <Text color="inactive" size="footnote" tabular>  {fmtTokens(c.tokens)}</Text> : null}
-          </Text>
-        ) : null}
-        <Text>
-          <Text color={temp.color}>● </Text>
-          <Text color={temp.color} weight="semibold">{temp.label}</Text>
-          {temp.detail && wide ? <Text color="inactive" size="footnote" tabular>  {temp.detail}</Text> : null}
-        </Text>
-      </Box>
-    )
-
-    return (
-      <Box flexDirection={wide ? 'row' : 'column'} justifyContent="space-between" paddingX={1} width="100%">
-        {left}
-        {right}
+        {dot}
       </Box>
     )
   })
