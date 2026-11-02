@@ -1,82 +1,199 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { classifyPace, fmtShort, freshness, needed, paceRatio, pickTier, temperature, usageText, dotSvg, barSvg } from '../hooks/register'
+import {
+  classifyPace, fmtShort, freshness, needed, paceRatio, pickTier, ringSvg, dotSvg, barSvg,
+  slotLabels, temperature,
+} from '../hooks/register'
 
 declare const console: { log: (...a: unknown[]) => void }
 
 const NOW = Date.parse('2026-11-01T12:00:00Z')
 const H = 3_600_000
+
+// Janela de 5 h que renova em 1h46 (3h14 já passadas).
 const FIVE = { percentUsed: 94, resetsAt: new Date(NOW + 106 * 60_000).toISOString() }
 const WEEK = { percentUsed: 20, resetsAt: new Date(NOW + (3 * 24 + 5) * H).toISOString() }
 
-describe('unidades', () => {
-  test('tempos curtos e longos', () => {
+const baseModel = (over: Record<string, unknown> = {}) => ({
+  now: NOW, five: FIVE, ctx: 62, paceLevel: 'elevated', slotIdx: 0,
+  temp: temperature(NOW - 10 * 60_000, true, NOW), fiveFresh: 'ok', ...over,
+}) as any
+
+// ------------------------------------------------------------------
+// Unidades puras
+// ------------------------------------------------------------------
+
+describe('tempos', () => {
+  test('curtos e longos', () => {
+    expect(fmtShort(0)).toBe('0m')
     expect(fmtShort(59)).toBe('59m')
+    expect(fmtShort(60)).toBe('1h00')
     expect(fmtShort(106)).toBe('1h46')
+    expect(fmtShort(23 * 60 + 5)).toBe('23h05')
     expect(fmtShort(30 * 60)).toBe('1d6h')
     expect(fmtShort(77 * 60)).toBe('3d')
   })
-  test('texto do bloco: renova em / renova às', () => {
-    expect(usageText(FIVE, NOW, 'wide', 'in')).toEqual({ pct: '94%', renew: 'renova em 1h46' })
-    expect(usageText(FIVE, NOW, 'wide', 'at').renew.startsWith('renova às ')).toBe(true)
-    expect(usageText(FIVE, NOW, 'narrow', 'in')).toEqual({ pct: '94%', renew: '1h46' })
-    expect(/^\d\d:\d\d$/.test(usageText(FIVE, NOW, 'narrow', 'at').renew)).toBe(true)
-  })
-  test('sem dados: "—", nunca 0%', () => {
-    expect(usageText(null, NOW, 'wide', 'in').pct).toBe('—')
-  })
-  test('ritmo com histerese e "calculando" sem histórico', () => {
+})
+
+describe('ritmo: três estados com histerese', () => {
+  test('sem histórico suficiente é "calculando", nunca "normal"', () => {
+    const early = { percentUsed: 3, resetsAt: new Date(NOW + 4.8 * H).toISOString() }
+    expect(paceRatio(early, NOW)).toBe(null)
     expect(classifyPace('normal', null)).toBe('calculating')
-    expect(classifyPace('normal', 0.95)).toBe('elevated')
-    expect(classifyPace('elevated', 0.85)).toBe('elevated')
+  })
+  test('limiares de subida', () => {
+    expect(classifyPace('calculating', 0.5)).toBe('normal')
+    expect(classifyPace('normal', 0.9)).toBe('elevated')
+    expect(classifyPace('normal', 1.25)).toBe('high')
+  })
+  test('pequenas oscilações não derrubam o estado', () => {
+    expect(classifyPace('elevated', 0.85)).toBe('elevated') // dentro da margem
     expect(classifyPace('elevated', 0.79)).toBe('normal')
-    expect(classifyPace('normal', 1.3)).toBe('high')
+    expect(classifyPace('high', 1.2)).toBe('high')
+    expect(classifyPace('high', 1.1)).toBe('elevated')
+    expect(classifyPace('high', 0.7)).toBe('normal')
+  })
+  test('R usa a fração da janela já passada', () => {
+    // 94% em 3h14 de 5h: R ≈ 1,45
     expect(Math.round((paceRatio(FIVE, NOW) ?? 0) * 100)).toBe(145)
   })
-  test('cache: quente, morno, frio, novo, desconhecido', () => {
+})
+
+describe('renovação', () => {
+  test('as duas opções do botão das 5 h, longas e curtas', () => {
+    const m = baseModel()
+    const wide = slotLabels(m, 'wide')
+    const narrow = slotLabels(m, 'narrow')
+    console.log('slot wide:', wide.join(' | '), ' / curto:', narrow.join(' | '))
+    expect(wide.length).toBe(2)
+    expect(wide[0]).toBe('Renova em 1h46')
+    expect(wide[1]!.startsWith('Renova às ')).toBe(true)
+    expect(narrow[0]).toBe('1h46')
+    expect(/^\d\d:\d\d$/.test(narrow[1]!)).toBe(true)
+  })
+  test('chegar a zero mostra "renovou", sem inventar consumo', () => {
+    const m = baseModel({ now: Date.parse(FIVE.resetsAt) + 60_000 })
+    expect(slotLabels(m, 'wide')[0]).toBe('Renovou')
+    expect(freshness(FIVE, NOW, null, false, m.now)).toBe('stale')
+  })
+})
+
+describe('dados desatualizados ou indisponíveis', () => {
+  const afterReset = Date.parse(FIVE.resetsAt) + 5 * 60_000
+  test('ocioso com janela válida: nada a avisar', () => {
+    expect(freshness(FIVE, NOW - 3 * H, null, false, NOW)).toBe('ok')
+  })
+  test('janela renovou sem leitura nova: desatualizado', () => {
+    expect(freshness(FIVE, NOW, null, false, afterReset)).toBe('stale')
+  })
+  test('com resposta em andamento: atualizando', () => {
+    expect(freshness(FIVE, NOW, null, true, afterReset)).toBe('updating')
+  })
+  test('resposta com erro depois da renovação: falha', () => {
+    expect(freshness(FIVE, NOW, { at: afterReset, reason: 'turn.error' }, false, afterReset + 1)).toBe('failed')
+  })
+  test('sem dados: "none", nunca 0%', () => {
+    expect(freshness(null, null, null, false, NOW)).toBe('none')
+  })
+})
+
+describe('estado do cache', () => {
+  test('quente, morno, frio, novo e desconhecido', () => {
     expect(temperature(NOW - 10 * 60_000, true, NOW).kind).toBe('hot')
     expect(temperature(NOW - 50 * 60_000, true, NOW).kind).toBe('warm')
-    expect(temperature(NOW - 2 * H, true, NOW).kind).toBe('cold')
+    expect(temperature(NOW - 3 * 24 * H, true, NOW).kind).toBe('cold')
     expect(temperature(null, false, NOW).kind).toBe('new')
+    // Sem registro: não vira "frio".
     expect(temperature(null, true, NOW).kind).toBe('unknown')
   })
-  test('desatualizado só quando a renovação passou sem leitura', () => {
-    const after = Date.parse(FIVE.resetsAt) + 60_000
-    expect(freshness(FIVE, NOW - 3 * H, null, false, NOW)).toBe('ok')
-    expect(freshness(FIVE, NOW, null, false, after)).toBe('stale')
-    expect(freshness(FIVE, NOW, null, true, after)).toBe('updating')
-    expect(freshness(FIVE, NOW, { at: after, reason: 'x' }, false, after + 1)).toBe('failed')
+  test('formas diferentes, não só cor', () => {
+    const hot = dotSvg(temperature(NOW, true, NOW), false)
+    const cold = dotSvg(temperature(NOW - 2 * H, true, NOW), false)
+    expect(hot.includes('filter="url(#g)"')).toBe(true)
+    expect(cold.includes('fill="none"')).toBe(true)
+    expect(temperature(NOW, true, NOW).detail.includes('não mede a qualidade do raciocínio')).toBe(true)
   })
-  test('movimento reduzido', () => {
-    expect(barSvg({ from: 10, to: 60, at: 0 }, 12).includes('prefers-reduced-motion')).toBe(true)
-    expect(dotSvg(temperature(NOW, true, NOW), true).includes('prefers-reduced-motion')).toBe(true)
+})
+
+describe('anel de contexto', () => {
+  test('0%, intermediário, 100% e sem leitura', () => {
+    expect(ringSvg(0).includes('>0</text>')).toBe(true)
+    expect(ringSvg(0).includes('stroke-dasharray="0')).toBe(false)
+    expect(ringSvg(62).includes('>62</text>')).toBe(true)
+    expect(ringSvg(100).includes('>100</text>')).toBe(true)
+    expect(ringSvg(null).includes('>—</text>')).toBe(true)
   })
-  test('níveis pela largura da faixa', () => {
-    console.log('colunas necessárias:', needed('wide'), needed('medium'), needed('narrow'))
-    expect(pickTier(200)).toBe('wide')
-    expect(pickTier(needed('wide') - 1)).toBe('medium')
-    expect(pickTier(needed('medium') - 1)).toBe('narrow')
-    expect(needed('narrow')).toBeLessThan(30)
+})
+
+describe('movimento reduzido', () => {
+  test('animações desligadas por prefers-reduced-motion', () => {
+    for (const s of [barSvg({ from: 10, to: 60, at: 0 }, 12), dotSvg(temperature(NOW, true, NOW), true)]) {
+      expect(s.includes('prefers-reduced-motion')).toBe(true)
+    }
+  })
+})
+
+describe('responsividade e estabilidade', () => {
+  test('níveis pela largura da própria faixa', () => {
+    const m = baseModel()
+    const need = { wide: needed(m, 'wide'), medium: needed(m, 'medium'), narrow: needed(m, 'narrow'), tight: needed(m, 'tight') }
+    console.log('colunas necessárias:', JSON.stringify(need))
+    expect(pickTier(m, 200)).toBe('wide')
+    expect(pickTier(m, need.wide - 1)).toBe('medium')
+    expect(pickTier(m, need.medium - 1)).toBe('narrow')
+    expect(pickTier(m, need.narrow - 1)).toBe('tight')
+    // Menor largura verificada: 40 colunas cabem no nível mais compacto.
+    expect(need.tight).toBeLessThan(41)
+  })
+  test('trocar a opção exibida não muda o nível (reserva pela maior)', () => {
+    const a = needed(baseModel({ slotIdx: 0 }), 'wide')
+    const b = needed(baseModel({ slotIdx: 1 }), 'wide')
+    expect(a).toBe(b)
+  })
+  test('1h00 → 59m não muda a largura reservada', () => {
+    const at = (min: number) => needed(baseModel({ now: Date.parse(FIVE.resetsAt) - min * 60_000 }), 'medium')
+    expect(at(60)).toBe(at(59))
   })
 })
 
 // ------------------------------------------------------------------
+// Desenho completo (terminal e desktop)
+// ------------------------------------------------------------------
 
-type Scenario = { surface?: 'terminal' | 'desktop'; columns: number; mode?: 'in' | 'at'; working?: boolean; five?: unknown; week?: unknown; lastMin?: number | null; pace?: string }
+type Scenario = {
+  surface?: 'terminal' | 'desktop'
+  columns: number
+  working?: boolean
+  focus?: string | null
+  five?: unknown
+  week?: unknown
+  ctx?: number | null
+  lastMin?: number | null
+  measuredMinAgo?: number | null
+  failure?: unknown
+  pace?: string
+  slot?: number
+  weekSlot?: number
+  now?: number
+}
 
 const mount = async ($: any, on: any, s: Scenario) => {
-  on('clock.now', () => ({ value: NOW }))
+  const now = s.now ?? NOW
+  on('clock.now', () => ({ value: now }))
   const values: Record<string, unknown> = {
     usage: { five: s.five === undefined ? FIVE : s.five, week: s.week === undefined ? WEEK : s.week },
     hasContext: true,
-    lastReply: s.lastMin === undefined ? NOW - 10 * 60_000 : s.lastMin === null ? null : NOW - s.lastMin * 60_000,
-    lastMeasure: NOW - 2 * 60_000,
-    failure: null,
+    ctxPercent: s.ctx === undefined ? 62 : s.ctx,
+    lastReply: s.lastMin === undefined ? now - 10 * 60_000 : s.lastMin === null ? null : now - s.lastMin * 60_000,
+    lastMeasure: s.measuredMinAgo === undefined ? now - 2 * 60_000 : s.measuredMinAgo === null ? null : now - s.measuredMinAgo * 60_000,
+    failure: s.failure ?? null,
     tick: 0,
     fill: { from: 94, to: 94, at: 0 },
     pulse: false,
+    slot: s.slot ?? 0,
+    weekSlot: s.weekSlot ?? 0,
     pace: { level: s.pace ?? 'elevated', window: FIVE.resetsAt },
-    renewMode: s.mode ?? 'in',
+    focusKey: s.focus ?? null,
   }
   on('state.get', (_: any, e: any) => ({ value: { value: values[e.key], version: 1 } }))
   return $.ui.mount({
@@ -85,85 +202,186 @@ const mount = async ($: any, on: any, s: Scenario) => {
   } as any)
 }
 
-const visible = (n: any): string => {
-  if (typeof n === 'string') return n
-  if (!n || typeof n !== 'object') return ''
-  if (n.type === 'Svg') return `[${n.props.alt}]`
-  const kids = (n.children ?? []).map(visible)
-  if (n.type === 'Button') return kids.join('') || (n.props?.label ?? '')
-  return n.type === 'Box' && n.props?.flexDirection === 'row' ? kids.filter(Boolean).join(' ') : kids.join('')
+const visible = (node: any): string => {
+  if (typeof node === 'string') return node
+  if (!node || typeof node !== 'object') return ''
+  if (node.props?.position === 'absolute') return ''
+  if (node.type === 'Button') return node.props?.label ?? (node.children ?? []).map(visible).join('')
+  if (node.type === 'Svg') return `[svg:${node.props.alt}]`
+  const kids = (node.children ?? []).map(visible)
+  return node.type === 'Box' && node.props?.flexDirection === 'row' ? kids.filter(Boolean).join(' ') : kids.join('')
 }
 
-const SHOTS: [string, Scenario][] = [
-  ['larga-5h', { columns: 100 }],
-  ['larga-horario', { columns: 100, mode: 'at' }],
-  ['macbook-5h', { columns: 85 }],
-  ['macbook-horario', { columns: 85, mode: 'at' }],
-  ['media-5h', { columns: 60 }],
-  ['estreita-5h', { columns: 30 }],
-  ['estreita-horario', { columns: 30, mode: 'at' }],
-  ['sem-dados', { columns: 85, five: null, week: null, lastMin: null }],
-  ['frio-ritmo-alto', { columns: 85, lastMin: 180, pace: 'high' }],
-  ['morno-trabalhando', { columns: 85, lastMin: 50, working: true, pace: 'normal' }],
+const dump = async (name: string, ui: any) => {
+  const tree = await ui.drawn()
+  console.log(`TREE::${name}::${JSON.stringify(tree)}`)
+  return tree
+}
+
+const PREVIEWS: [string, Scenario][] = [
+  ['larga', { columns: 120 }],
+  ['media', { columns: 70 }],
+  ['estreita', { columns: 52 }],
+  ['minima', { columns: 40 }],
 ]
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  for (const [name, sc] of SHOTS) {
+  for (const [name, sc] of PREVIEWS) {
     test(`${surface} ${name}: uma linha`, async ($, on) => {
       const ui = await mount($, on, { ...sc, surface })
-      const tree = await ui.drawn()
-      console.log(`TREE::${surface}-${name}::${sc.columns}::${JSON.stringify(tree)}`)
-      console.log(`${surface} ${name} (${sc.columns}): ${visible(tree)}`)
+      const tree = await dump(`${surface}-${name}`, ui)
       expect(tree.props.flexDirection).toBe('row')
       expect(tree.props.flexWrap).toBe('nowrap')
+      const line = visible(tree)
+      console.log(`${surface} ${name} (${sc.columns} col): ${line}`)
+      expect(line.includes('94%')).toBe(true)
+      expect(line.includes('20%')).toBe(false)
+      expect(line.includes('Semana')).toBe(false)
       await ui.unmount()
     })
   }
 }
 
-test('5 h: barra, %, ritmo e renovação no mesmo botão', async ($, on) => {
-  const ui = await mount($, on, { columns: 100 })
-  const b: any = await ui.find({ type: 'Button', key: 'usage' })
-  expect(visible(b)).toBe('5h 94% ↗ · renova em 1h46')
-  expect(visible(await ui.drawn()).includes('Quente')).toBe(true)
+test('larga mostra rótulos completos e texto do cache', async ($, on) => {
+  const ui = await mount($, on, { columns: 120 })
+  const line = visible(await ui.drawn())
+  expect(line.includes('Renova em 1h46')).toBe(true)
+  expect(line.includes('Quente')).toBe(true)
   await ui.unmount()
 })
 
-test('clique alterna para o horário da renovação', async ($, on) => {
-  const ui = await mount($, on, { columns: 100, mode: 'at' })
-  const b: any = await ui.find({ type: 'Button', key: 'usage' })
-  expect(/^5h 94% ↗ · renova às \d\d:\d\d$/.test(visible(b))).toBe(true)
+test('estreita: sem barra, rótulos curtos, só o símbolo do cache', async ($, on) => {
+  const ui = await mount($, on, { columns: 26 })
+  const line = visible(await ui.drawn())
+  expect(line.includes('━')).toBe(false)
+  expect(line.includes('Quente')).toBe(false)
+  expect(line.includes('◉')).toBe(true)
   await ui.unmount()
 })
 
-for (const mode of ['in', 'at'] as const) {
-  test(`a semana não aparece (modo ${mode})`, async ($, on) => {
-    const ui = await mount($, on, { columns: 100, mode })
-    const line = visible(await ui.drawn())
-    expect(line.includes('Semana')).toBe(false)
-    expect(line.includes('20%')).toBe(false)
+for (const [level, glyph] of [['normal', '→'], ['elevated', '↗'], ['high', '↑'], ['calculating', '…']] as const) {
+  test(`ritmo ${level} → ${glyph}`, async ($, on) => {
+    const ui = await mount($, on, { columns: 120, pace: level })
+    const b: any = await ui.find({ type: 'Button', key: 'pace' })
+    expect(visible(b)).toBe(glyph)
     await ui.unmount()
   })
 }
 
-test('estreita: sem barra, tempo curto, só o símbolo do cache', async ($, on) => {
-  const ui = await mount($, on, { columns: 30 })
-  const line = visible(await ui.drawn())
-  expect(line.includes('━')).toBe(false)
-  expect(line.includes('5h 94% ↗  1h46')).toBe(true)
-  expect(line.includes('Quente')).toBe(false)
+for (const [idx, prefix] of [[0, 'Renova em'], [1, 'Renova às']] as const) {
+  test(`renovação das 5 h, opção ${idx}: ${prefix}`, async ($, on) => {
+    const ui = await mount($, on, { columns: 120, slot: idx })
+    const b: any = await ui.find({ type: 'Button', key: 'slot' })
+    expect(b.props.label.startsWith(prefix)).toBe(true)
+    await ui.unmount()
+  })
+}
+
+test('preferência antiga (opções removidas) continua válida', async ($, on) => {
+  const ui = await mount($, on, { columns: 120, slot: 2 })
+  const b: any = await ui.find({ type: 'Button', key: 'slot' })
+  expect(b.props.label.startsWith('Renova em')).toBe(true)
   await ui.unmount()
 })
 
-test('só há um botão: o bloco de uso', async ($, on) => {
-  const ui = await mount($, on, { columns: 100 })
-  expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['usage'])
+
+for (const ctx of [0, 37, 100, null]) {
+  test(`contexto ${ctx === null ? 'sem leitura' : ctx + '%'}`, async ($, on) => {
+    const ui = await mount($, on, { columns: 120, ctx })
+    const b: any = await ui.find({ type: 'Button', key: 'ctx' })
+    console.log(`contexto ${ctx}: ${visible(b)}`)
+    expect(visible(b).endsWith(ctx === null ? '—' : String(ctx))).toBe(true)
+    await ui.unmount()
+  })
+}
+
+test('dados ausentes viram "—", nunca 0%', async ($, on) => {
+  const ui = await mount($, on, { columns: 120, five: null, week: null, ctx: null, lastMin: null })
+  const line = visible(await dump('terminal-ausente', ui))
+  console.log('ausente:', line)
+  expect(line.includes('0%')).toBe(false)
+  expect(line.includes('—')).toBe(true)
   await ui.unmount()
 })
 
-test('trocar de visão não muda o resto da linha', async ($, on) => {
-  const a = await mount($, on, { columns: 85 })
-  const cacheA = visible((await a.drawn()).children[1])
-  await a.unmount()
-  expect(cacheA).toBe('◉ Quente')
+test('janela vencida sem leitura: ⟳ só nos dados afetados', async ($, on) => {
+  const later = Date.parse(FIVE.resetsAt) + 10 * 60_000
+  const ui = await mount($, on, { columns: 120, now: later, measuredMinAgo: 120 })
+  const line = visible(await dump('terminal-desatualizado', ui))
+  console.log('desatualizado:', line)
+  expect(line.split('⟳').length - 1).toBe(1) // só a janela de 5 h; a semana segue válida
+  expect(line.includes('Renovou')).toBe(true)
+  expect(line.includes('94%')).toBe(true) // não zera o consumo
+  await ui.unmount()
 })
+
+test('atualizando e falha são distintos', async ($, on) => {
+  const later = Date.parse(FIVE.resetsAt) + 10 * 60_000
+  let ui = await mount($, on, { columns: 120, now: later, measuredMinAgo: 120, working: true })
+  expect(visible(await ui.drawn()).includes('⋯')).toBe(true)
+  await ui.unmount()
+})
+
+test('falha de atualização', async ($, on) => {
+  const later = Date.parse(FIVE.resetsAt) + 10 * 60_000
+  const ui = await mount($, on, { columns: 120, now: later, measuredMinAgo: 120, failure: { at: later - 60_000, reason: 'turn.error' } })
+  expect(visible(await ui.drawn()).includes('⚠')).toBe(true)
+  await ui.unmount()
+})
+
+test('foco pelo teclado mostra o cartão de detalhes, sem mudar a altura', async ($, on) => {
+  const ui = await mount($, on, { columns: 120, focus: 'pace' })
+  const cards = (await ui.drawn()).children.filter((c: any) => c?.props?.position === 'absolute')
+  const shown = cards.filter((c: any) => c.props.display === 'flex')
+  expect(shown.length).toBe(1)
+  expect(shown[0].props.top).toBe(0)
+  expect(visible({ ...shown[0], props: {} })).toBe('Ritmo elevado')
+  // Todos os cartões revelam por hover no mesmo escopo do item.
+  expect(cards.filter((c: any) => c.props.display === 'none').every((c: any) => c.hover?.display === 'flex' && c.hover?.scope)).toBe(true)
+  await ui.unmount()
+})
+
+test('cartões de cada item', async ($, on) => {
+  const ui = await mount($, on, { columns: 120 })
+  const cards = (await ui.drawn()).children.filter((c: any) => c?.props?.position === 'absolute')
+  for (const c of cards) console.log(`cartão ${c.key ?? c.props.key}: ${visible({ ...c, props: {} })}`)
+  const texts = cards.map((c: any) => visible({ ...c, props: {} }))
+  expect(texts.includes('Contexto: 62% ocupado')).toBe(true)
+  expect(texts.some((t: string) => t.startsWith('Estado do cache: quente ·'))).toBe(true)
+  expect(texts.some((t: string) => t.includes('semanal'))).toBe(false)
+  await ui.unmount()
+})
+
+test('todo item clicável é um Button (alcançável por teclado)', async ($, on) => {
+  const ui = await mount($, on, { columns: 120 })
+  const keys = (await ui.findAll({ type: 'Button' })).map((b: any) => b.key)
+  console.log('botões:', keys.join(', '))
+  for (const k of ['five', 'pace', 'slot', 'ctx', 'cacheGlyph', 'cache']) expect(keys.includes(k)).toBe(true)
+  await ui.unmount()
+})
+
+// Cenários extras desenhados no desktop, usados nas prévias visuais.
+const later = Date.parse(FIVE.resetsAt) + 10 * 60_000
+const EXTRA: [string, Scenario][] = [
+  ['foco-cache', { columns: 120, focus: 'cache' }],
+  ['foco-renovacao', { columns: 70, focus: 'slot' }],
+  ['desatualizado', { columns: 120, now: later, measuredMinAgo: 120 }],
+  ['atualizando', { columns: 120, now: later, measuredMinAgo: 120, working: true }],
+  ['falha', { columns: 120, now: later, measuredMinAgo: 120, failure: { at: later - 60_000, reason: 'turn.error' } }],
+  ['ausente', { columns: 120, five: null, week: null, ctx: null, lastMin: null }],
+  ['ritmo-normal-morno', { columns: 120, pace: 'normal', lastMin: 50, ctx: 0 }],
+  ['ritmo-alto-frio', { columns: 120, pace: 'high', lastMin: 300, ctx: 100 }],
+  ['calculando-trabalhando', { columns: 120, pace: 'calculating', working: true, ctx: 37 }],
+  ['opcoes-alternadas', { columns: 120, slot: 1, weekSlot: 1 }],
+  ['macbook-85', { columns: 85 }],
+  ['macbook-85-horario', { columns: 85, slot: 1 }],
+  ['macbook-85-semdados', { columns: 85, five: null, week: null, ctx: null, lastMin: null }],
+  ['macbook-60', { columns: 60 }],
+]
+for (const [name, sc] of EXTRA) {
+  test(`prévia ${name}`, async ($, on) => {
+    const ui = await mount($, on, { ...sc, surface: 'desktop' })
+    await dump(`desktop-${name}`, ui)
+    await ui.unmount()
+  })
+}
