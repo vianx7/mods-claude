@@ -6,19 +6,19 @@ Uma faixa minimalista, de uma linha só, acima da caixa de texto do Claude Code:
 ━━━━━━━━━━━━ 5h 94% ↗ · renova em 1h46                    ◉ Quente
 ```
 
-**Clique no bloco de uso** para trocar entre a janela de 5 h e a semana. Só esse bloco muda:
+**Clique no bloco** para alternar entre *renova em 1h46* e *renova às 14:00*. Só esse texto muda:
 
 ```
-━━━━━━━━━━━━ Semana 20% · renova em 3d                    ◉ Quente
+━━━━━━━━━━━━ 5h 94% ↗ · renova às 14:00                   ◉ Quente
 ```
 
-A escolha fica salva entre sessões.
+A escolha fica salva entre sessões. O horário usa o fuso da máquina onde o Claude Code roda.
 
 ## O que aparece
 
-- **Barra + %**: quanto da janela já foi usado. Azul, laranja a partir de 75%, vermelha a partir de 90%. Quando o valor muda, ou quando você troca de visão, a barra anima até o valor novo.
-- **Ritmo** (só na visão de 5 h): `→` normal, `↗` elevado (laranja), `↑` muito elevado (vermelho). Fica oculto enquanto há pouco histórico na janela.
-- **renova em …**: tempo até a janela renovar.
+- **Barra + %**: quanto da janela já foi usado. Azul, laranja a partir de 75%, vermelha a partir de 90%. Quando o valor muda, a barra anima até o valor novo.
+- **Ritmo**: `→` normal, `↗` elevado (laranja), `↑` muito elevado (vermelho). Fica oculto enquanto há pouco histórico na janela.
+- **renova em … / renova às …**: quando a janela de 5 h renova.
 - **Bolinha do cache** `◉ ◐ ○ ◌`: quente, morno, frio ou sem registro. Enquanto o Claude trabalha, ela pulsa.
 
 ### Ritmo
@@ -55,9 +55,9 @@ Sem dado, aparece `—`, nunca 0%.
 
 ## Larguras
 
-- **Larga** (≥ ~56 colunas): barra de 12 e o texto do cache.
+- **Larga** (≥ ~52 colunas): barra de 12 e o texto do cache.
 - **Média**: barra de 6 e só a bolinha.
-- **Estreita** (< ~43 colunas): sem barra, `7d` em vez de *Semana* e tempos curtos (`5h 94% ↗  1h46`).
+- **Estreita** (< ~39 colunas): sem barra, tempos curtos (`5h 94% ↗  1h46`).
 
 No app desktop, a faixa reserva 12 colunas a mais por causa dos botões nativos.
 

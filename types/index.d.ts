@@ -4,8 +4,8 @@ export type Fill = { from: number; to: number; at: number }
 export type PaceLevel = 'calculating' | 'normal' | 'elevated' | 'high'
 export type PaceState = { level: PaceLevel; window: string | null }
 export type Failure = { at: number; reason: string }
-/** Qual uso o bloco mostra: janela de 5 h ou semana. */
-export type View = 'five' | 'week'
+/** Como a renovação aparece: tempo restante ou horário. */
+export type RenewMode = 'in' | 'at'
 
 declare module 'claude-code' {
   interface PluginState {
@@ -19,7 +19,7 @@ declare module 'claude-code' {
       fill: Fill
       pulse: boolean
       pace: PaceState
-      view: View
+      renewMode: RenewMode
     }
   }
 }

@@ -16,13 +16,14 @@ describe('unidades', () => {
     expect(fmtShort(30 * 60)).toBe('1d6h')
     expect(fmtShort(77 * 60)).toBe('3d')
   })
-  test('texto do bloco: 5 h e semana no mesmo formato', () => {
-    expect(usageText('five', FIVE, NOW, 'wide')).toEqual({ label: '5h', pct: '94%', renew: 'renova em 1h46' })
-    expect(usageText('week', WEEK, NOW, 'wide')).toEqual({ label: 'Semana', pct: '20%', renew: 'renova em 3d' })
-    expect(usageText('week', WEEK, NOW, 'narrow')).toEqual({ label: '7d', pct: '20%', renew: '3d' })
+  test('texto do bloco: renova em / renova às', () => {
+    expect(usageText(FIVE, NOW, 'wide', 'in')).toEqual({ pct: '94%', renew: 'renova em 1h46' })
+    expect(usageText(FIVE, NOW, 'wide', 'at').renew.startsWith('renova às ')).toBe(true)
+    expect(usageText(FIVE, NOW, 'narrow', 'in')).toEqual({ pct: '94%', renew: '1h46' })
+    expect(/^\d\d:\d\d$/.test(usageText(FIVE, NOW, 'narrow', 'at').renew)).toBe(true)
   })
   test('sem dados: "—", nunca 0%', () => {
-    expect(usageText('five', null, NOW, 'wide').pct).toBe('—')
+    expect(usageText(null, NOW, 'wide', 'in').pct).toBe('—')
   })
   test('ritmo com histerese e "calculando" sem histórico', () => {
     expect(classifyPace('normal', null)).toBe('calculating')
@@ -61,7 +62,7 @@ describe('unidades', () => {
 
 // ------------------------------------------------------------------
 
-type Scenario = { surface?: 'terminal' | 'desktop'; columns: number; view?: 'five' | 'week'; working?: boolean; five?: unknown; week?: unknown; lastMin?: number | null; pace?: string }
+type Scenario = { surface?: 'terminal' | 'desktop'; columns: number; mode?: 'in' | 'at'; working?: boolean; five?: unknown; week?: unknown; lastMin?: number | null; pace?: string }
 
 const mount = async ($: any, on: any, s: Scenario) => {
   on('clock.now', () => ({ value: NOW }))
@@ -75,7 +76,7 @@ const mount = async ($: any, on: any, s: Scenario) => {
     fill: { from: 94, to: 94, at: 0 },
     pulse: false,
     pace: { level: s.pace ?? 'elevated', window: FIVE.resetsAt },
-    view: s.view ?? 'five',
+    renewMode: s.mode ?? 'in',
   }
   on('state.get', (_: any, e: any) => ({ value: { value: values[e.key], version: 1 } }))
   return $.ui.mount({
@@ -95,12 +96,12 @@ const visible = (n: any): string => {
 
 const SHOTS: [string, Scenario][] = [
   ['larga-5h', { columns: 100 }],
-  ['larga-semana', { columns: 100, view: 'week' }],
+  ['larga-horario', { columns: 100, mode: 'at' }],
   ['macbook-5h', { columns: 85 }],
-  ['macbook-semana', { columns: 85, view: 'week' }],
+  ['macbook-horario', { columns: 85, mode: 'at' }],
   ['media-5h', { columns: 60 }],
-  ['estreita-5h', { columns: 40 }],
-  ['estreita-semana', { columns: 40, view: 'week' }],
+  ['estreita-5h', { columns: 30 }],
+  ['estreita-horario', { columns: 30, mode: 'at' }],
   ['sem-dados', { columns: 85, five: null, week: null, lastMin: null }],
   ['frio-ritmo-alto', { columns: 85, lastMin: 180, pace: 'high' }],
   ['morno-trabalhando', { columns: 85, lastMin: 50, working: true, pace: 'normal' }],
@@ -128,18 +129,28 @@ test('5 h: barra, %, ritmo e renovação no mesmo botão', async ($, on) => {
   await ui.unmount()
 })
 
-test('semana: mesmo bloco, sem ritmo', async ($, on) => {
-  const ui = await mount($, on, { columns: 100, view: 'week' })
+test('clique alterna para o horário da renovação', async ($, on) => {
+  const ui = await mount($, on, { columns: 100, mode: 'at' })
   const b: any = await ui.find({ type: 'Button', key: 'usage' })
-  expect(visible(b)).toBe('Semana 20% · renova em 3d')
+  expect(/^5h 94% ↗ · renova às \d\d:\d\d$/.test(visible(b))).toBe(true)
   await ui.unmount()
 })
 
-test('estreita: sem barra, rótulos curtos, só o símbolo do cache', async ($, on) => {
-  const ui = await mount($, on, { columns: 40, view: 'week' })
+for (const mode of ['in', 'at'] as const) {
+  test(`a semana não aparece (modo ${mode})`, async ($, on) => {
+    const ui = await mount($, on, { columns: 100, mode })
+    const line = visible(await ui.drawn())
+    expect(line.includes('Semana')).toBe(false)
+    expect(line.includes('20%')).toBe(false)
+    await ui.unmount()
+  })
+}
+
+test('estreita: sem barra, tempo curto, só o símbolo do cache', async ($, on) => {
+  const ui = await mount($, on, { columns: 30 })
   const line = visible(await ui.drawn())
   expect(line.includes('━')).toBe(false)
-  expect(line.includes('7d 20%  3d')).toBe(true)
+  expect(line.includes('5h 94% ↗  1h46')).toBe(true)
   expect(line.includes('Quente')).toBe(false)
   await ui.unmount()
 })

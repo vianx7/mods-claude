@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit, SessionUsage, Timer } from 'claude-code'
 
-import type { Failure, Fill, Limit, PaceLevel, PaceState, Usage, View } from '../types'
+import type { Failure, Fill, Limit, PaceLevel, PaceState, RenewMode, Usage } from '../types'
 
 // =====================================================================
 // Estado
@@ -16,7 +16,7 @@ const tick = atom({ plugin: 'usage-band', key: 'tick' } as const, 0)
 const fill = atom({ plugin: 'usage-band', key: 'fill' } as const, { from: 0, to: 0, at: 0 } as Fill)
 const pulse = atom({ plugin: 'usage-band', key: 'pulse' } as const, false)
 const pace = atom({ plugin: 'usage-band', key: 'pace' } as const, { level: 'calculating', window: null } as PaceState)
-const view = atom({ plugin: 'usage-band', key: 'view' } as const, 'five' as View)
+const renewMode = atom({ plugin: 'usage-band', key: 'renewMode' } as const, 'in' as RenewMode)
 
 // =====================================================================
 // Constantes
@@ -152,19 +152,27 @@ const FRESH_GLYPH: Record<Freshness, { glyph: string; color: string }> = {
 export type Tier = 'wide' | 'medium' | 'narrow'
 const BAR_CELLS: Record<Tier, number> = { wide: 12, medium: 6, narrow: 0 }
 
-/** O que o bloco escreve depois da barra, ex.: "94% ↗ · renova em 1h46". */
-export const usageText = (v: View, l: Limit | null, now: number, tier: Tier) => {
-  const label = v === 'five' ? '5h' : tier === 'narrow' ? '7d' : 'Semana'
-  if (!l) return { label, pct: '—', renew: '' }
+// Horário no fuso local da máquina onde o Claude Code roda.
+const clockTime = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+
+/** O que o bloco escreve: "5h 94%" e "renova em 1h46" / "renova às 14:00". */
+export const usageText = (l: Limit | null, now: number, tier: Tier, mode: RenewMode) => {
+  if (!l) return { pct: '—', renew: '' }
   const left = minutesUntil(l.resetsAt, now)
-  const renew = left === null ? '' : left === 0 ? 'renovou' : tier === 'narrow' ? fmtShort(left) : `renova em ${fmtShort(left)}`
-  return { label, pct: `${Math.round(l.percentUsed)}%`, renew }
+  const pct = `${Math.round(l.percentUsed)}%`
+  if (left === null || !l.resetsAt) return { pct, renew: '' }
+  if (left === 0) return { pct, renew: 'renovou' }
+  const short = tier === 'narrow'
+  const renew = mode === 'at'
+    ? (short ? clockTime(l.resetsAt) : `renova às ${clockTime(l.resetsAt)}`)
+    : (short ? fmtShort(left) : `renova em ${fmtShort(left)}`)
+  return { pct, renew }
 }
 
 /** Colunas necessárias por nível; reserva o pior caso das duas visões. */
 export const needed = (tier: Tier): number => {
   const bar = BAR_CELLS[tier] ? BAR_CELLS[tier] + 1 : 0
-  const text = tier === 'narrow' ? '7d 100% ↑ 23h59'.length : 'Semana 100% ↑ · renova em 23h59'.length
+  const text = tier === 'narrow' ? '5h 100% ↑ 23h59'.length : '5h 100% ↑ · renova em 23h59'.length
   const cache = tier === 'wide' ? '◉ Quente'.length : 1
   return 2 + bar + text + 2 + cache
 }
@@ -278,20 +286,16 @@ async function absorb($: EngineInterface, u: Pick<SessionUsage, 'rateLimits' | '
   const r = next.five ? paceRatio(next.five, now) : null
   await update($, pace, prev => ({ level: classifyPace(prev.window === windowId ? prev.level : 'calculating', r), window: windowId }))
 
-  const v = await read($, view)
-  await animateTo($, (v === 'five' ? next.five : next.week)?.percentUsed ?? 0)
+  await animateTo($, next.five?.percentUsed ?? 0)
   await checkAlerts($, next, (await read($, pace)).level)
 }
 
-/** Clique no bloco: alterna 5 h ⇄ semana; só esse bloco muda. */
-async function toggleView($: EngineInterface) {
-  await update($, view, v => (v === 'five' ? 'week' : 'five'))
-  const v = await read($, view)
-  const u = await read($, usage)
+/** Clique no bloco: alterna "renova em" ⇄ "renova às"; nada mais muda. */
+async function toggleRenew($: EngineInterface) {
+  await update($, renewMode, m => (m === 'in' ? 'at' : 'in'))
   try {
-    await $.store.set('pref:view', v)
+    await $.store.set('pref:renewMode', await read($, renewMode))
   } catch {}
-  await animateTo($, (v === 'five' ? u.five : u.week)?.percentUsed ?? 0)
 }
 
 async function markReply($: EngineInterface) {
@@ -321,8 +325,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     try {
-      const v = await $.store.get('pref:view')
-      if (v === 'five' || v === 'week') await update($, view, () => v)
+      const m = await $.store.get('pref:renewMode')
+      if (m === 'in' || m === 'at') await update($, renewMode, () => m)
     } catch {}
     try {
       await absorb($, await $.session.usage(), false)
@@ -362,14 +366,14 @@ export const register: Register = on => {
   })
 
   // ===================================================================
-  // Desenho: [barra] [5h 94% ↗ · renova em 1h46]  ...  [● Quente]
+  // Desenho: [barra] [5h 94% ↗ · renova em 1h46]  ...  [◉ Quente]
   // ===================================================================
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const [u, ctxFilled, last, measured, fail, f, beat, paceState, v] = await Promise.all([
+    const [u, ctxFilled, last, measured, fail, f, beat, paceState, mode] = await Promise.all([
       read($, usage), read($, hasContext), read($, lastReply), read($, lastMeasure),
-      read($, failure), read($, fill), read($, pulse), read($, pace), read($, view),
+      read($, failure), read($, fill), read($, pulse), read($, pace), read($, renewMode),
     ])
     await read($, tick)
     const now = await $.clock.now()
@@ -380,10 +384,10 @@ export const register: Register = on => {
 
     // No desktop os botões são nativos e ocupam mais que as células do texto.
     const tier = pickTier(e.props.bodyColumns - (Svg ? 12 : 0))
-    const limit = v === 'five' ? u.five : u.week
+    const limit = u.five
     const fresh = freshness(limit, measured, fail, working, now)
-    const t = usageText(v, limit, now, tier)
-    const paceV = v === 'five' && u.five && fresh === 'ok' ? PACE_VIEW[paceState.level] : null
+    const t = usageText(limit, now, tier, mode)
+    const paceV = limit && fresh === 'ok' ? PACE_VIEW[paceState.level] : null
     const temp = temperature(last, ctxFilled, now)
     const dim = fresh !== 'ok'
 
@@ -392,7 +396,7 @@ export const register: Register = on => {
     const filled = Math.max(0, Math.min(cells, Math.round((shown / 100) * cells)))
     const bar = cells && limit ? (
       Svg ? (
-        <Svg source={barSvg(f, cells)} alt={`${t.label}: ${t.pct} usado`} />
+        <Svg source={barSvg(f, cells)} alt={`Janela de 5 h: ${t.pct} usado`} />
       ) : (
         <Text dimColor={dim}>
           <Text color={themeTint(shown)}>{'━'.repeat(filled)}</Text>
@@ -401,10 +405,10 @@ export const register: Register = on => {
       )
     ) : null
 
-    // Um botão só: clicar troca 5 h ⇄ semana, sem mexer no resto.
+    // Um botão só: clicar troca "renova em" ⇄ "renova às", sem mexer no resto.
     const usageButton = (
-      <Button key="usage" plain onPress={() => toggleView($)}>
-        <Text color="inactive" size="footnote">{t.label} </Text>
+      <Button key="usage" plain onPress={() => toggleRenew($)}>
+        <Text color="inactive" size="footnote">5h </Text>
         <Text weight="semibold" tabular dimColor={dim}>{t.pct}</Text>
         {paceV && paceV.glyph ? <Text color={paceV.color}> {paceV.glyph}</Text> : null}
         {FRESH_GLYPH[fresh].glyph ? <Text color={FRESH_GLYPH[fresh].color}> {FRESH_GLYPH[fresh].glyph}</Text> : null}
