@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderChildren, SessionRateLimit, SessionUsage, Timer } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren, RenderElement, SessionRateLimit, SessionUsage, Timer } from 'claude-code'
 
 import type { Failure, Fill, Limit, PaceLevel, PaceState, Usage } from '../types'
 
@@ -469,11 +469,15 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    // O Clawd (observador) pode estar desenhando um alerta crucial abaixo deste
-    // plugin: nesse caso a faixa cede a linha para ele, só enquanto o alerta dura.
+    // O Clawd (observador) pode estar desenhando abaixo deste plugin:
+    // - um alerta crucial: a faixa cede a linha, só enquanto o alerta dura;
+    // - o 🦀 do menu: entra no fim desta mesma linha.
+    let crab: RenderElement | null = null
     try {
       const below = await next(e)
-      if (below && typeof below === 'object' && (below as { props?: { key?: string } }).props?.key === 'clawd-alert') return below
+      const key = below && typeof below === 'object' ? (below as { props?: { key?: string } }).props?.key : undefined
+      if (key === 'clawd-alert') return below
+      if (key === 'clawd-crab') crab = below
     } catch {}
     const [u, ctxFilled, ctxPct, last, measured, fail, f, beat, slotIdx, paceState, focused] = await Promise.all([
       read($, usage), read($, hasContext), read($, ctxPercent), read($, lastReply), read($, lastMeasure),
@@ -495,7 +499,7 @@ export const register: Register = on => {
       slotIdx, temp, fiveFresh,
     }
     // No desktop os botões são nativos e ocupam mais que as células do texto.
-    const tier = pickTier(model, e.props.bodyColumns - (Svg ? 12 : 0))
+    const tier = pickTier(model, e.props.bodyColumns - (Svg ? 12 : 0) - (crab ? 4 : 0))
     const r = reserve(model, tier)
     const wide = tier === 'wide'
     const updated = ago(measured, now)
@@ -616,12 +620,13 @@ export const register: Register = on => {
     ))
 
     return (
-      <Box position="relative" flexDirection="row" flexWrap="nowrap" justifyContent="space-between" alignItems="center"
+      <Box key="usage-band-row" position="relative" flexDirection="row" flexWrap="nowrap" justifyContent="space-between" alignItems="center"
         paddingX={1} width="100%" overflow="hidden">
         {fiveBlock}
         {slotBlock}
         {ctxBlock}
         {cacheBlock}
+        {crab}
         {cards}
       </Box>
     )

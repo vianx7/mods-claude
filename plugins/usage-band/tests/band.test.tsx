@@ -407,3 +407,16 @@ test('qualquer outro desenho embaixo não toma a faixa', async ($, on) => {
   expect(s.includes('94%')).toBe(true)
   await ui.unmount()
 })
+
+test('o 🦀 do Clawd entra no fim da mesma linha', async ($, on) => {
+  on('ui.render', ($: any, e: any) => {
+    const { Box, Text } = $.ui.resolve(e)
+    return <Box key="clawd-crab"><Text>🦀</Text></Box>
+  })
+  const ui = await mount($, on, { columns: 120 })
+  const tree: any = await ui.drawn()
+  expect(tree.props.key).toBe('usage-band-row')
+  const last = JSON.stringify(tree.children.filter((c: any) => c?.props?.position !== 'absolute').at(-1))
+  expect(last.includes('🦀')).toBe(true)
+  await ui.unmount()
+})
