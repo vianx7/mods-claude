@@ -385,3 +385,25 @@ for (const [name, sc] of EXTRA) {
     await ui.unmount()
   })
 }
+
+test('cede a linha para um alerta do Clawd e só para ele', async ($, on) => {
+  on('ui.render', ($: any, e: any) => {
+    const { Box, Text } = $.ui.resolve(e)
+    return <Box key="clawd-alert"><Text>🦀 Clawd: alerta</Text></Box>
+  })
+  const ui = await mount($, on, { columns: 120 })
+  expect(JSON.stringify(await ui.drawn()).includes('🦀 Clawd: alerta')).toBe(true)
+  await ui.unmount()
+})
+
+test('qualquer outro desenho embaixo não toma a faixa', async ($, on) => {
+  on('ui.render', ($: any, e: any) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>outra coisa</Text>
+  })
+  const ui = await mount($, on, { columns: 120 })
+  const s = JSON.stringify(await ui.drawn())
+  expect(s.includes('outra coisa')).toBe(false)
+  expect(s.includes('94%')).toBe(true)
+  await ui.unmount()
+})

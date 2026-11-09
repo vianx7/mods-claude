@@ -469,6 +469,12 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
+    // O Clawd (observador) pode estar desenhando um alerta crucial abaixo deste
+    // plugin: nesse caso a faixa cede a linha para ele, só enquanto o alerta dura.
+    try {
+      const below = await next(e)
+      if (below && typeof below === 'object' && (below as { props?: { key?: string } }).props?.key === 'clawd-alert') return below
+    } catch {}
     const [u, ctxFilled, ctxPct, last, measured, fail, f, beat, slotIdx, paceState, focused] = await Promise.all([
       read($, usage), read($, hasContext), read($, ctxPercent), read($, lastReply), read($, lastMeasure),
       read($, failure), read($, fill), read($, pulse), read($, slot), read($, pace), read($, focusKey),

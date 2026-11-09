@@ -1,0 +1,8 @@
+{
+  "name": "clawd",
+  "version": "1.0.0",
+  "description": "Clawd, o caranguejo observador: entende prompts ditados por voz e só aparece nas horas cruciais",
+  "types": "./types/index.d.ts",
+  "license": "MIT",
+  "author": { "name": "vianx7" }
+}
