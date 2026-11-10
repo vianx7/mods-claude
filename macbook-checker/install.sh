@@ -2,7 +2,7 @@
 # Instalador do MacBook Checker. No terminal do Mac:
 #   curl -fsSL https://raw.githubusercontent.com/vianx7/mods-claude/main/macbook-checker/install.sh | bash
 set -e
-BASE="${MBC_BASE:-https://raw.githubusercontent.com/vianx7/mods-claude/main/macbook-checker}"
+BASE="${MBC_BASE:-https://raw.githubusercontent.com/vianx7/mods-claude/claude/intelligent-albattani-26396s/macbook-checker}"
 DIR="${TMPDIR:-/tmp}/macbook-checker"
 
 mkdir -p "$DIR"
