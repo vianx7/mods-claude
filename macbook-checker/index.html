@@ -24,6 +24,13 @@ nav h1{font-size:17px;margin:0 8px 16px}
 nav h1 small{display:block;font-weight:400;color:var(--muted);font-size:12px}
 nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--text);text-decoration:none;cursor:pointer}
 nav a.active{background:var(--panel2)}
+.navh{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:16px 10px 4px}
+.big{font-size:22px;font-weight:600}
+.pill{display:inline-block;padding:4px 12px;border-radius:20px;background:var(--panel2);border:1px solid var(--line)}
+button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.stat{display:flex;gap:28px;flex-wrap:wrap;margin:10px 0}
+.stat div b{display:block;font-size:28px}
+.stat div span{color:var(--muted);font-size:13px}
 .dot{width:10px;height:10px;border-radius:50%;background:#454b59;flex:none}
 .dot.ok{background:var(--ok)} .dot.fail{background:var(--fail)} .dot.warn{background:var(--warn)}
 main{padding:28px 36px 60px;max-width:1100px}
@@ -119,6 +126,10 @@ const TESTS = [
   {id:"mic",      name:"Microfone",         icon:"🎙️"},
   {id:"camera",   name:"Câmera",            icon:"📷"},
   {id:"extras",   name:"Portas e físico",   icon:"🔌"},
+  {id:"travamentos",name:"Travamentos",     icon:"💥", adv:1},
+  {id:"wifi",     name:"Velocidade Wi-Fi",  icon:"📶", adv:1},
+  {id:"ssd",      name:"Velocidade do SSD", icon:"💾", adv:1},
+  {id:"estresse", name:"Teste de estresse", icon:"🔥", adv:1},
   {id:"relatorio",name:"Relatório",         icon:"📋"},
 ];
 const MANUAL = [
@@ -136,8 +147,12 @@ const MANUAL = [
   ["coating","Tela sem manchas no antirreflexo","Com tela apagada, procure manchas/descascados."],
   ["fan","Ventoinha sem barulho estranho","Abra vários apps; não deve chiar nem raspar."],
   ["icloud","Sem conta iCloud do vendedor","Ajustes do Sistema → topo: ninguém logado; \"Buscar Mac\" desligado."],
+  ["touchbar","Touch Bar (só MacBook Pro com Touch Bar)","Passe o dedo de ponta a ponta; tudo responde, sem manchas ou partes apagadas."],
+  ["serial","Nº de série confere","O da aba Sistema bate com o gravado embaixo do Mac e com a caixa/nota."],
+  ["liquid","Sem sinal de líquido","Lanterna do celular dentro das portas: nada de corrosão verde/branca."],
+  ["diag","Apple Diagnostics sem erro","Desligue, segure o botão de ligar até \"Opções\", depois ⌘D. Anote o código se aparecer."],
 ];
-let state = {results:{}, manual:{}, notes:""};
+let state = {results:{}, manual:{}, details:{}, notes:""};
 try{ const s = JSON.parse(localStorage.getItem("mbc-state")||"null"); if(s) state = Object.assign(state,s); }catch(e){}
 function save(){ try{ localStorage.setItem("mbc-state", JSON.stringify(state)); }catch(e){} renderNav(); }
 function setResult(id, v){ state.results[id]=v; save(); const vd=document.querySelector(".verdict"); if(vd) vd.replaceWith(verdict(id)); }
@@ -162,8 +177,10 @@ function statusOf(id){
 }
 function renderNav(){
   const nav = $("#nav");
-  nav.querySelectorAll("a").forEach(a=>a.remove());
-  TESTS.forEach(t=>{
+  nav.querySelectorAll("a,.navh").forEach(a=>a.remove());
+  TESTS.forEach((t,i)=>{
+    if(t.adv && !TESTS[i-1].adv) nav.appendChild(h(`<div class="navh">Avançado · deixe pro final</div>`));
+    if(!t.adv && i && TESTS[i-1].adv) nav.appendChild(h(`<div class="navh">&nbsp;</div>`));
     const st = statusOf(t.id);
     const a = h(`<a class="${t.id===current?"active":""}"><span class="dot ${st==="pending"?"":st}"></span>${t.icon} ${t.name}</a>`);
     a.onclick = ()=>go(t.id);
@@ -406,18 +423,85 @@ function tone({pan=0,freq=440,dur=1.2,sweep=0,type="sine"}){
   else node.connect(a.destination);
   o.start(t); o.stop(t+dur+.02); return o;
 }
+/* música de teste: gerada aqui mesmo (bateria, baixo, acordes e arpejo) */
+const Music=(()=>{
+  let a=null, master=null, panner=null, timer=0, step=0, next=0, noise=null, playing=false, pan=0, vol=.8;
+  const S=60/100/4;                                   // semicolcheia a 100 BPM
+  const mf=n=>440*Math.pow(2,(n-69)/12);
+  const PROG=[[36,[60,64,67]],[43,[59,62,67]],[45,[60,64,69]],[41,[60,65,69]]]; // C G Am F
+  const ARP=[0,1,2,1,0,2,1,2];
+  function note(t,f,d,type,g,lp){ const o=a.createOscillator(), e=a.createGain(); o.type=type; o.frequency.value=f;
+    e.gain.setValueAtTime(0,t); e.gain.linearRampToValueAtTime(g,t+.012); e.gain.exponentialRampToValueAtTime(.0001,t+d);
+    let n=o; if(lp){ const fl=a.createBiquadFilter(); fl.type="lowpass"; fl.frequency.value=lp; o.connect(fl); n=fl; }
+    n.connect(e); e.connect(master); o.start(t); o.stop(t+d+.05); }
+  function kick(t){ const o=a.createOscillator(), e=a.createGain(); o.frequency.setValueAtTime(150,t); o.frequency.exponentialRampToValueAtTime(40,t+.2);
+    e.gain.setValueAtTime(1,t); e.gain.exponentialRampToValueAtTime(.001,t+.4); o.connect(e); e.connect(master); o.start(t); o.stop(t+.45); }
+  function hit(t,d,g,hp){ const s=a.createBufferSource(); s.buffer=noise; const f=a.createBiquadFilter(); f.type="highpass"; f.frequency.value=hp;
+    const e=a.createGain(); e.gain.setValueAtTime(g,t); e.gain.exponentialRampToValueAtTime(.001,t+d); s.connect(f); f.connect(e); e.connect(master); s.start(t); s.stop(t+d+.02); }
+  function tick(){
+    while(next < a.currentTime+.2){
+      const t=next, s=step%16, [root,ch]=PROG[Math.floor(step/16)%4];
+      if(s===0||s===8||s===10) kick(t);
+      if(s===4||s===12){ hit(t,.18,.5,1200); note(t,180,.08,"triangle",.25); }
+      if(s%2===0) hit(t,.05,s%4===2?.22:.12,7000);
+      if(s%2===0) note(t,mf(root+(s===6||s===14?12:0)),S*1.7,"sawtooth",.32,520);
+      if(s===0) ch.forEach(n=>note(t,mf(n),S*16,"triangle",.07,1800));
+      if(s%2===0) note(t,mf(ch[ARP[s/2]]+12),S*1.6,"triangle",.13);
+      if(Math.floor(step/16)%2===1 && (s===0||s===3||s===6)) note(t,mf(ch[s/3]+24),S*2.5,"sine",.09);
+      next+=S; step++;
+    }
+  }
+  return {
+    get playing(){ return playing; },
+    start(){ if(playing) return; a=ac();
+      if(!noise){ noise=a.createBuffer(1,a.sampleRate,a.sampleRate); const d=noise.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1; }
+      master=a.createGain(); master.gain.value=vol*.55;
+      panner=a.createStereoPanner ? a.createStereoPanner() : null;
+      if(panner){ panner.pan.value=pan; master.connect(panner); panner.connect(a.destination); } else master.connect(a.destination);
+      step=0; next=a.currentTime+.06; tick(); timer=setInterval(tick,25); playing=true; },
+    stop(){ if(!playing) return; clearInterval(timer); const m=master; m.gain.setTargetAtTime(0,a.currentTime,.04); setTimeout(()=>m.disconnect(),400); playing=false; },
+    setPan(p){ pan=p; if(panner) panner.pan.setTargetAtTime(p,a.currentTime,.015); },
+    setVol(v){ vol=v; if(master) master.gain.setTargetAtTime(v*.55,a.currentTime,.03); },
+    get canPan(){ return !!(window.AudioContext||window.webkitAudioContext).prototype.createStereoPanner; }
+  };
+})();
 PAGES.audio = m=>{
-  m.append(h(`<div><h2>🔊 Alto-falantes</h2><p class="lead">Volume em uns 70%, <b>sem fone</b>. Depois repita com fone para testar a saída P2.</p></div>`));
+  m.append(h(`<div><h2>🔊 Alto-falantes</h2><p class="lead">Toque a música e mande o som pra cada lado. <b>Sem fone.</b> Depois repita com fone para testar a saída P2.</p></div>`));
   const c=h(`<div class="card">
-    <div class="row"><button data-p="-1">◀ Só esquerdo</button><button data-p="1">Só direito ▶</button><button data-p="0">◀▶ Os dois</button></div>
-    <p class="muted">O som deve sair claramente só do lado indicado.</p>
-    <div class="row"><button id="sweep">〰️ Varredura grave → agudo (10 s)</button><button id="bass">Grave forte (60 Hz)</button><button id="melody">🎵 Melodia</button></div>
-    <p class="muted" style="margin-bottom:0">Na varredura, preste atenção em <b>chiado, vibração, estalo ou "rasgado"</b> — principalmente nos graves. Isso indica alto-falante estourado.</p></div>`);
+    <div class="row"><button class="primary" id="play" style="font-size:17px;padding:12px 22px">▶ Tocar música</button>
+      <span class="big" id="side" style="margin-left:10px"></span></div>
+    <div class="row" style="margin-top:16px">
+      <button data-p="-1" style="flex:1;padding:16px">◀ Só ESQUERDO</button>
+      <button data-p="0" class="on" style="flex:1;padding:16px">◀ Os dois ▶</button>
+      <button data-p="1" style="flex:1;padding:16px">Só DIREITO ▶</button></div>
+    <div class="row" style="margin-top:12px"><button id="auto">🔁 Alternar sozinho (esq → dir → os dois)</button>
+      <span class="muted" style="margin-left:auto">Volume da música</span><input type="range" id="vol" min="0" max="1" step="0.05" value="0.8" style="width:160px"></div>
+    <div class="alert warn" style="margin-bottom:0"><b>Como ouvir:</b> comece com o volume do Mac em uns 50% e vá subindo até o <b>máximo</b> — é no volume alto que aparece o problema.
+      Preste atenção em <b>chiado, "rasgado", estalo ou vibração na carcaça</b>, principalmente nas batidas graves.
+      No "Só esquerdo" não pode sair nada do lado direito (e vice-versa). Os dois lados devem ter o <b>mesmo volume</b>.</div></div>`);
   m.append(c);
-  c.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>tone({pan:+b.dataset.p,freq:520,dur:1.5}));
-  $("#sweep",c).onclick=()=>tone({freq:40,sweep:16000,dur:10});
-  $("#bass",c).onclick=()=>tone({freq:60,dur:3});
-  $("#melody",c).onclick=()=>{ const a=ac(); [523,659,784,1047,784,659,523].forEach((f,i)=>setTimeout(()=>tone({freq:f,dur:.28,type:"triangle",pan:Math.sin(i)}),i*300)); };
+  if(!Music.canPan) c.append(h(`<div class="alert bad">Este navegador não separa esquerdo/direito. Abra no Safari atualizado ou no Chrome.</div>`));
+  const LBL_SIDE={"-1":"🔈 Tocando só no ESQUERDO","0":"🔊 Tocando nos DOIS lados","1":"Tocando só no DIREITO 🔈"};
+  let pan=0, auto=0;
+  const setPan=p=>{ pan=p; Music.setPan(p); c.querySelectorAll("[data-p]").forEach(b=>b.classList.toggle("on",+b.dataset.p===p));
+    $("#side",c).textContent=Music.playing?LBL_SIDE[p]:""; };
+  const play=$("#play",c);
+  play.onclick=()=>{ if(Music.playing){ Music.stop(); play.textContent="▶ Tocar música"; clearInterval(auto); auto=0; $("#auto",c).classList.remove("on"); }
+    else { Music.start(); play.textContent="⏸ Parar"; } setPan(pan); };
+  c.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{ if(!Music.playing) play.click(); clearInterval(auto); auto=0; $("#auto",c).classList.remove("on"); setPan(+b.dataset.p); });
+  $("#auto",c).onclick=()=>{ if(auto){ clearInterval(auto); auto=0; $("#auto",c).classList.remove("on"); return; }
+    if(!Music.playing) play.click(); const seq=[-1,1,0]; let i=0; setPan(seq[0]); $("#auto",c).classList.add("on");
+    auto=setInterval(()=>{ i=(i+1)%3; setPan(seq[i]); },4800); };
+  $("#vol",c).oninput=e=>Music.setVol(+e.target.value);
+
+  const t=h(`<div class="card"><p style="margin-top:0"><b>Testes extras</b> <span class="muted">(opcional)</span></p>
+    <div class="row"><button data-t="-1">Bip esquerdo</button><button data-t="1">Bip direito</button><button id="sweep">〰️ Varredura grave → agudo (10 s)</button><button id="bass">Grave forte (60 Hz)</button></div>
+    <p class="muted" style="margin-bottom:0">A varredura passa por todas as frequências: se em algum ponto o som "rasgar" ou a carcaça vibrar, o alto-falante tem defeito.</p></div>`);
+  m.append(t);
+  t.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>tone({pan:+b.dataset.t,freq:520,dur:1.2}));
+  $("#sweep",t).onclick=()=>tone({freq:40,sweep:16000,dur:10});
+  $("#bass",t).onclick=()=>tone({freq:60,dur:3});
+  cleanup=()=>{ Music.stop(); clearInterval(auto); };
   m.append(verdict("audio"));
 };
 
@@ -465,9 +549,43 @@ PAGES.camera = m=>{
   m.append(verdict("camera"));
 };
 
+/* ---------------- servidor local (testes avançados) ---------------- */
+async function api(name,q){
+  let r;
+  try{ r=await fetch("/api/"+name+(q?"?"+q:""),{cache:"no-store"}); }catch(e){ throw new Error("sem servidor"); }
+  if(!r.ok) throw new Error("sem servidor");
+  try{ return await r.json(); }catch(e){ throw new Error("sem servidor"); }
+}
+const NO_SERVER=`<div class="alert warn">Este teste só funciona com a página aberta pelo comando do terminal (o servidorzinho local roda os testes).
+  Abra o Terminal e rode o comando do MacBook Checker de novo.</div>`;
+function setDetail(id,txt){ state.details[id]=txt; save(); }
+function fmtAgo(sec){ const d=Math.floor(sec/86400); return d<1?"hoje":d===1?"ontem":d<60?`há ${d} dias`:d<730?`há ${Math.round(d/30)} meses`:`há ${Math.round(d/365)} anos`; }
+function findAll(o,fn,out=[]){ if(o&&typeof o==="object"){ if(fn(o)) out.push(o); for(const k in o) findAll(o[k],fn,out); } return out; }
+
 /* ---------------- extras ---------------- */
 PAGES.extras = m=>{
-  m.append(h(`<div><h2>🔌 Portas e físico</h2><p class="lead">Coisas que o navegador não testa sozinho. Marque cada uma.</p></div>`));
+  m.append(h(`<div><h2>🔌 Portas e físico</h2><p class="lead">Primeiro as portas (a página detecta sozinha), depois o checklist do que dá pra ver com os olhos.</p></div>`));
+  const live=h(`<div class="card"><p style="margin-top:0"><b>⚡ Ao vivo:</b> plugue o carregador em <b>cada porta USB-C</b>, uma de cada vez, e veja se aparece "carregando". Depois plugue um pendrive, HD ou o seu celular em cada porta e veja se aparece na lista.</p>
+    <div class="stat"><div><b id="pw">…</b><span>Energia</span></div><div><b id="bt">…</b><span>Bateria</span></div><div><b id="wt">—</b><span>Carregador</span></div></div>
+    <div><span class="muted">Dispositivos USB conectados:</span> <span id="usb">…</span></div>
+    <p class="muted" style="margin-bottom:0">Obs.: com "Carregamento otimizado" ligado, o Mac pode segurar a bateria em 80% e mostrar "não está carregando" — normal. O importante é aparecer "Na tomada".</p></div>`);
+  m.append(live);
+  let alive=true, timers=[];
+  const pollPower=async()=>{ try{ const r=await api("power");
+      const ac=/AC Power/i.test(r.batt), pct=(r.batt.match(/(\d+)%/)||[])[1], st=((r.batt.match(/\d+%;\s*([^;]+);/)||[])[1]||"").trim();
+      const w=(r.ac.match(/Wattage\s*=\s*(\d+)/i)||[])[1];
+      const ST={charging:"carregando",discharging:"descarregando",charged:"carregada","AC attached":"na tomada, não está carregando","finishing charge":"terminando a carga"};
+      $("#pw",live).innerHTML=ac?`<span style="color:var(--ok)">🔌 Na tomada</span>`:"🔋 Na bateria";
+      $("#bt",live).textContent=(pct?pct+"% ":"")+(ST[st]||st);
+      $("#wt",live).textContent=ac&&w?w+" W":"—";
+    }catch(e){ live.innerHTML=NO_SERVER; alive=false; } };
+  const pollUsb=async()=>{ if(!alive) return; try{ const r=await api("usb"); let names=[];
+      try{ const j=JSON.parse(r.json||"{}"); names=findAll(j,o=>o._name && !o._items && !/bus|controller|hub|root/i.test(o._name)).map(o=>o._name); }catch(e){}
+      $("#usb",live).innerHTML=names.length?names.map(n=>`<span class="pill">${esc(n)}</span>`).join(" "):"<span class='muted'>nenhum</span>";
+    }catch(e){} };
+  pollPower(); pollUsb(); timers.push(setInterval(pollPower,2500), setInterval(pollUsb,4000));
+  cleanup=()=>timers.forEach(clearInterval);
+
   const c=h(`<div class="card"></div>`); m.append(c);
   const draw=()=>{ c.innerHTML=""; MANUAL.forEach(([k,t,d])=>{ const v=state.manual[k];
     const row=h(`<div class="mitem"><div class="t">${esc(t)}<small>${esc(d)}</small></div><div class="seg">
@@ -476,7 +594,95 @@ PAGES.extras = m=>{
     a.onclick=()=>{state.manual[k]="ok";save();draw();}; b.onclick=()=>{state.manual[k]="fail";save();draw();}; n.onclick=()=>{state.manual[k]="na";save();draw();};
     c.append(row); }); };
   draw();
-  const nx=h(`<div class="verdict"><span style="flex:1"></span><button class="primary">Ver relatório →</button></div>`); nx.querySelector("button").onclick=()=>go("relatorio"); m.append(nx);
+  const nx=h(`<div class="verdict"><span class="muted">Básico pronto! Agora os testes avançados.</span><span style="flex:1"></span><button class="primary">Próximo →</button></div>`);
+  nx.querySelector("button").onclick=()=>go("travamentos"); m.append(nx);
+};
+
+/* ---------------- travamentos ---------------- */
+PAGES.travamentos = m=>{
+  m.append(h(`<div><h2>💥 Travamentos</h2><p class="lead">Procura no Mac registros de <b>kernel panic</b> — quando ele trava e reinicia sozinho. É o melhor jeito de achar defeito de placa que o vendedor não conta.</p></div>`));
+  const c=h(`<div class="card"><p class="muted" style="margin:0">Verificando…</p></div>`); m.append(c);
+  api("panics").then(r=>{
+    const recent=r.panics.filter(p=>r.now-p.time<90*86400);
+    const setupAgo=r.setupDone? r.now-r.setupDone : null;
+    let html="";
+    if(!r.readable) html+=`<div class="alert warn">Não consegui ler a pasta de relatórios (o usuário logado não é administrador). Resultado inconclusivo.</div>`;
+    else if(!r.panics.length) html+=`<div class="alert good">Nenhum kernel panic registrado. 👍</div>`;
+    else if(recent.length) html+=`<div class="alert bad">${recent.length} travamento(s) nos últimos 3 meses. Pergunte ao vendedor e desconfie: pode ser defeito de placa, memória ou SSD.</div>`;
+    else html+=`<div class="alert warn">${r.panics.length} travamento(s) antigo(s), nenhum nos últimos 3 meses.</div>`;
+    if(setupAgo!==null) html+=`<p>macOS configurado <b>${fmtAgo(setupAgo)}</b>${setupAgo<30*86400?` — <span style="color:var(--warn)">foi formatado há pouco, então o histórico está quase vazio e este teste diz pouco. Faça o teste de estresse com mais atenção.</span>`:"."}</p>`;
+    if(r.panics.length) html+=`<table>${r.panics.slice(0,12).map(p=>`<tr><td>${new Date(p.time*1000).toLocaleString("pt-BR")}</td><td>${esc(p.name)}</td></tr>`).join("")}</table>`;
+    html+=`<p class="muted">Travamentos de apps (não graves): ${r.crashes}</p>`;
+    if(r.reboots) html+=`<details><summary class="muted" style="cursor:pointer">Últimos desligamentos/reinícios</summary><pre>${esc(r.reboots)}</pre></details>`;
+    c.innerHTML=html;
+    if(!state.results.travamentos && r.readable){ setResult("travamentos", recent.length?"fail":r.panics.length?"warn":"ok"); }
+    setDetail("travamentos", r.panics.length? `${r.panics.length} panic(s), ${recent.length} recente(s)` : "nenhum panic");
+  }).catch(()=>c.innerHTML=NO_SERVER);
+  m.append(verdict("travamentos"));
+};
+
+/* ---------------- wi-fi ---------------- */
+PAGES.wifi = m=>{
+  m.append(h(`<div><h2>📶 Velocidade Wi-Fi</h2><p class="lead">Mede a internet pelo Wi-Fi do Mac com a ferramenta da própria Apple. Leva uns 20 segundos.</p></div>`));
+  const c=h(`<div class="card"><button class="primary" id="go">▶ Medir velocidade</button> <span class="muted" id="msg"></span>
+    <div class="stat" id="res"></div>
+    <p class="muted" style="margin-bottom:0">Depende da internet do lugar. Compare com o seu celular <b>no mesmo Wi-Fi</b> (fast.com): o Mac deve dar parecido ou mais. Muito abaixo = antena ou placa Wi-Fi com problema.</p></div>`);
+  m.append(c);
+  $("#go",c).onclick=async()=>{ const b=$("#go",c); b.disabled=true; let n=0; const iv=setInterval(()=>$("#msg",c).textContent=`Medindo… ${++n}s`,1000);
+    try{ const r=await api("wifi"); if(r.error) throw new Error(r.error);
+      const j=JSON.parse(r.json); const mb=x=>x?(x/1e6).toFixed(0):"—";
+      $("#res",c).innerHTML=`<div><b>${mb(j.dl_throughput)} Mbps</b><span>Download</span></div><div><b>${mb(j.ul_throughput)} Mbps</b><span>Upload</span></div>`+
+        (j.responsiveness||j.dl_responsiveness?`<div><b>${Math.round(j.responsiveness||j.dl_responsiveness)}</b><span>Resposta (RPM)</span></div>`:"");
+      $("#msg",c).textContent="Pronto ✓"; setDetail("wifi",`↓ ${mb(j.dl_throughput)} / ↑ ${mb(j.ul_throughput)} Mbps`);
+      if(!state.results.wifi && j.dl_throughput>1e6) setResult("wifi","ok");
+    }catch(e){ $("#msg",c).textContent=""; $("#res",c).innerHTML=/sem servidor/.test(e.message)?NO_SERVER:`<div class="alert warn">${esc(e.message)} Está conectado num Wi-Fi?</div>`; }
+    clearInterval(iv); b.disabled=false; };
+  m.append(verdict("wifi"));
+};
+
+/* ---------------- ssd ---------------- */
+PAGES.ssd = m=>{
+  m.append(h(`<div><h2>💾 Velocidade do SSD</h2><p class="lead">Grava um arquivo de 2 GB, mede a velocidade e apaga em seguida. Leva poucos segundos.</p></div>`));
+  const c=h(`<div class="card"><button class="primary" id="go">▶ Testar SSD</button> <span class="muted" id="msg"></span><div id="res"></div>
+    <p class="muted" style="margin-bottom:0">Referência para M1: <b>acima de 1.500 MB/s</b> é o normal (o de 256 GB é um pouco mais lento que os maiores). Abaixo de 500 MB/s, desconfie.</p></div>`);
+  m.append(c);
+  $("#go",c).onclick=async()=>{ const b=$("#go",c); b.disabled=true; $("#msg",c).textContent="Gravando 2 GB…";
+    try{ const r=await api("ssd"); if(r.error) throw new Error(r.error);
+      const v=Math.round(r.mbps), cls=v>=1500?"good":v>=500?"warn":"bad";
+      $("#res",c).innerHTML=`<div class="stat"><div><b>${v.toLocaleString("pt-BR")} MB/s</b><span>Gravação</span></div><div><b>${r.secs.toFixed(1)} s</b><span>para 2 GB</span></div></div>
+        <div class="alert ${cls}">${cls==="good"?"Velocidade normal. 👍":cls==="warn"?"Mais lento que o esperado. Feche outros apps e teste de novo.":"Muito lento: pode ser SSD desgastado ou com defeito."}</div>`;
+      $("#msg",c).textContent="Pronto ✓"; setDetail("ssd",`${v} MB/s`);
+      if(!state.results.ssd) setResult("ssd",cls==="good"?"ok":cls==="warn"?"warn":"fail");
+    }catch(e){ $("#msg",c).textContent=""; $("#res",c).innerHTML=/sem servidor/.test(e.message)?NO_SERVER:`<div class="alert warn">${esc(e.message)}</div>`; }
+    b.disabled=false; };
+  m.append(verdict("ssd"));
+};
+
+/* ---------------- estresse ---------------- */
+PAGES.estresse = m=>{
+  m.append(h(`<div><h2>🔥 Teste de estresse</h2><p class="lead">Coloca todos os núcleos do processador no máximo por 90 segundos. Mac com defeito costuma travar, reiniciar ou desligar aqui.</p></div>`));
+  const c=h(`<div class="card"><div class="alert warn" style="margin-top:0"><b>Antes:</b> ligue o carregador. Durante o teste o Mac vai <b>esquentar</b> (normal). No MacBook Pro a ventoinha acelera — deve fazer só barulho de vento, nunca de raspado. O MacBook Air não tem ventoinha.</div>
+    <button class="primary" id="go">▶ Começar (90 s)</button> <span class="muted" id="msg"></span>
+    <div class="row" style="margin-top:14px"><div class="progress"><i id="bar"></i></div><b id="left"></b></div>
+    <p class="muted" id="hb" style="margin-bottom:0"></p><div id="res"></div></div>`);
+  m.append(c);
+  let iv=0;
+  $("#go",c).onclick=async()=>{ const b=$("#go",c), S=90; b.disabled=true; const t0=Date.now(); let worst=0, last=Date.now();
+    iv=setInterval(()=>{ const now=Date.now(), el=(now-t0)/1000; worst=Math.max(worst,now-last-250); last=now;
+      $("#bar",c).style.width=Math.min(100,el/S*100)+"%"; $("#left",c).textContent=Math.max(0,Math.ceil(S-el))+" s";
+      $("#hb",c).textContent=`Tela respondendo ✓ (maior engasgo: ${Math.max(0,worst)} ms)`; },250);
+    $("#msg",c).textContent="Rodando… não feche esta página.";
+    try{ const r=await api("stress","s="+S); if(r.error) throw new Error(r.error);
+      const lim=(r.after.match(/CPU_Speed_Limit\s*=\s*(\d+)/)||[])[1];
+      $("#res",c).innerHTML=`<div class="alert good">Aguentou ${r.secs} s com ${r.cpus} núcleos no máximo sem travar. 👍</div>`+
+        (lim&&+lim<100?`<div class="alert warn">O Mac reduziu a velocidade para ${lim}% por temperatura.</div>`:"")+
+        `<p class="muted">Encoste a mão embaixo do Mac: quente é normal; <b>quente demais pra segurar</b> ou cheiro de queimado não é.</p>`;
+      $("#msg",c).textContent="Pronto ✓"; setDetail("estresse",`${r.secs}s, ${r.cpus} núcleos, sem travar`);
+      if(!state.results.estresse) setResult("estresse","ok");
+    }catch(e){ $("#msg",c).textContent=""; $("#res",c).innerHTML=/sem servidor/.test(e.message)?NO_SERVER:`<div class="alert warn">${esc(e.message)}</div>`; }
+    clearInterval(iv); b.disabled=false; };
+  cleanup=()=>clearInterval(iv);
+  m.append(verdict("estresse"));
 };
 
 /* ---------------- relatório ---------------- */
@@ -485,7 +691,7 @@ function reportText(){
   const d=sysData(); const L=[];
   L.push("RELATÓRIO MACBOOK CHECKER — "+new Date().toLocaleString("pt-BR"));
   if(d){ d.rows.forEach(([k,v])=>L.push(k+": "+v)); L.push(""); sysAlerts(d).forEach(a=>L.push("• "+a[1])); }
-  L.push(""); TESTS.filter(t=>t.id!=="relatorio"&&t.id!=="extras").forEach(t=>L.push(t.name+": "+LBL[statusOf(t.id)]));
+  L.push(""); TESTS.filter(t=>t.id!=="relatorio"&&t.id!=="extras").forEach(t=>L.push(t.name+": "+LBL[statusOf(t.id)]+(state.details[t.id]?" ("+state.details[t.id]+")":"")));
   L.push(""); MANUAL.forEach(([k,t])=>L.push(t+": "+LBL[state.manual[k]||"pending"]));
   if(state.notes) L.push("", "Observações: "+state.notes);
   return L.join("\n");
@@ -497,7 +703,7 @@ PAGES.relatorio = m=>{
   const c=h(`<div class="card rep"><table></table></div>`); m.append(c);
   const tb=$("table",c);
   TESTS.filter(t=>t.id!=="relatorio").forEach(t=>{ const s=statusOf(t.id);
-    const r=h(`<tr><td>${t.icon} ${t.name}</td><td><span class="tag ${s}">${LBL[s]}</span></td></tr>`); r.style.cursor="pointer"; r.onclick=()=>go(t.id); tb.append(r); });
+    const r=h(`<tr><td>${t.icon} ${t.name}${state.details[t.id]?` <span class="muted">· ${esc(state.details[t.id])}</span>`:""}</td><td><span class="tag ${s}">${LBL[s]}</span></td></tr>`); r.style.cursor="pointer"; r.onclick=()=>go(t.id); tb.append(r); });
   MANUAL.filter(([k])=>state.manual[k]==="fail").forEach(([k,t])=>tb.append(h(`<tr><td>&nbsp;&nbsp;↳ ${esc(t)}</td><td><span class="tag fail">✗ Problema</span></td></tr>`)));
   const n=h(`<div class="card"><p style="margin-top:0">Observações (ex.: risco na tampa, tecla "E" dura):</p><textarea style="width:100%;min-height:80px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit"></textarea>
     <div class="row" style="margin-top:12px"><button class="primary" id="copy">Copiar relatório</button><button id="print">Imprimir / salvar PDF</button><span style="flex:1"></span><button id="reset">Apagar tudo e recomeçar</button></div></div>`);
@@ -505,7 +711,7 @@ PAGES.relatorio = m=>{
   const ta=$("textarea",n); ta.value=state.notes||""; ta.oninput=()=>{state.notes=ta.value; try{localStorage.setItem("mbc-state",JSON.stringify(state));}catch(e){}};
   $("#copy",n).onclick=async()=>{ try{ await navigator.clipboard.writeText(reportText()); $("#copy",n).textContent="Copiado ✓"; }catch(e){ prompt("Copie:",reportText()); } };
   $("#print",n).onclick=()=>window.print();
-  $("#reset",n).onclick=()=>{ if(confirm("Apagar todos os resultados?")){ state={results:{},manual:{},notes:""}; save(); go("sistema"); } };
+  $("#reset",n).onclick=()=>{ if(confirm("Apagar todos os resultados?")){ state={results:{},manual:{},details:{},notes:""}; save(); go("sistema"); } };
 };
 
 window.addEventListener("hashchange",()=>{ const id=location.hash.slice(1); if(id!==current && PAGES[id]) go(id); });

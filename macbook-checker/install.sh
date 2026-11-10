@@ -9,6 +9,7 @@ mkdir -p "$DIR"
 echo "⬇️  Baixando o MacBook Checker..."
 curl -fsSL "$BASE/index.html" -o "$DIR/index.html"
 curl -fsSL "$BASE/check.sh"   -o "$DIR/check.sh"
+curl -fsSL "$BASE/server.pl"  -o "$DIR/server.pl"
 chmod +x "$DIR/check.sh"
 
 # </dev/tty: quando vem de "curl | bash", o stdin é o próprio script

@@ -52,25 +52,22 @@ echo "✅ Informações salvas."
 
 URL=""
 SERVER_PID=""
-# Um servidor local (http://127.0.0.1) libera câmera e microfone em qualquer navegador.
-# O python3 de /usr/bin só funciona se as Command Line Tools estiverem instaladas
-# (senão o macOS abre um pop-up pedindo para instalar) — por isso a checagem.
-PY=""
-if command -v python3 >/dev/null 2>&1; then
-  if [ "$(command -v python3)" != "/usr/bin/python3" ] || xcode-select -p >/dev/null 2>&1; then
-    PY="python3"
-  fi
-fi
-
-if [ -n "$PY" ]; then
-  "$PY" -m http.server "$PORT" --bind 127.0.0.1 --directory "$DIR" >/dev/null 2>&1 &
-  SERVER_PID=$!
-  sleep 1
-  if kill -0 "$SERVER_PID" 2>/dev/null; then
-    URL="http://127.0.0.1:$PORT/index.html"
-  else
-    SERVER_PID=""
-  fi
+# Servidor local em Perl (já vem em todo Mac): libera câmera/microfone no Safari
+# e roda os testes avançados (portas, SSD, Wi-Fi, travamentos, estresse).
+if command -v perl >/dev/null 2>&1 && [ -f "$DIR/server.pl" ]; then
+  for P in $(seq "$PORT" $((PORT + 10))); do
+    perl "$DIR/server.pl" "$DIR" "$P" >/dev/null 2>&1 &
+    SERVER_PID=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      curl -fs "http://127.0.0.1:$P/api/ping" >/dev/null 2>&1 && break
+      kill -0 "$SERVER_PID" 2>/dev/null || break
+      sleep 0.3
+    done
+    if curl -fs "http://127.0.0.1:$P/api/ping" >/dev/null 2>&1; then
+      URL="http://127.0.0.1:$P/index.html"; break
+    fi
+    kill "$SERVER_PID" 2>/dev/null; SERVER_PID=""
+  done
 fi
 
 open_url() {
@@ -92,7 +89,7 @@ if [ -n "$URL" ]; then
   echo ""
   echo "Deixe este terminal aberto enquanto faz os testes."
   echo "Quando terminar, aperte Ctrl+C aqui para fechar."
-  trap 'kill "$SERVER_PID" 2>/dev/null; echo; echo "👋 Pronto. Até mais!"; exit 0' INT TERM
+  trap 'kill "$SERVER_PID" 2>/dev/null; pkill -f "server.pl $DIR" 2>/dev/null; echo; echo "👋 Pronto. Até mais!"; exit 0' INT TERM
   wait "$SERVER_PID"
 else
   echo "🌐 Abrindo a página como arquivo local."
