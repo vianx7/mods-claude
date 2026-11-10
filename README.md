@@ -9,7 +9,7 @@ Mods para o Claude Code.
 
 ## Outras ferramentas
 
-- [💻 MacBook Checker](macbook-checker): testa um MacBook usado antes de comprar (teclado, tela, trackpad, áudio, câmera, bateria, iCloud). Roda com um comando no Terminal do Mac.
+- [💻 MacBook Checker](https://github.com/vianx7/macbook-checker): testa um MacBook usado antes de comprar (teclado, tela, trackpad, áudio, câmera, bateria, iCloud). Roda com um comando no Terminal do Mac.
 
 ## Instalar
 
