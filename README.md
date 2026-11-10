@@ -7,6 +7,10 @@ Mods para o Claude Code.
 | [usage-band](plugins/usage-band) | Faixa de uma linha acima do prompt com o uso da janela de 5 h, renovação, contexto e estado do cache. |
 | [clawd](plugins/clawd) | 🦀 Caranguejo observador: entende prompts ditados por voz e só aparece nas horas cruciais. |
 
+## Outras ferramentas
+
+- [💻 MacBook Checker](macbook-checker): testa um MacBook usado antes de comprar (teclado, tela, trackpad, áudio, câmera, bateria, iCloud). Roda com um comando no Terminal do Mac.
+
 ## Instalar
 
 No chat do Claude Code:
