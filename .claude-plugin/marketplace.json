@@ -1,9 +1,19 @@
 {
   "name": "mods-claude",
-  "owner": { "name": "vianx7" },
+  "owner": {
+    "name": "vianx7"
+  },
   "description": "Mods para o Claude Code: faixa de uso do plano e o Clawd, caranguejo observador",
   "plugins": [
-    { "name": "usage-band", "source": "./plugins/usage-band", "description": "Faixa de uma linha acima do prompt com o uso da janela de 5 h, renovação, contexto e cache" },
-    { "name": "clawd", "source": "./plugins/clawd", "description": "Caranguejo observador: entende prompts ditados por voz e só aparece nas horas cruciais" }
+    {
+      "name": "usage-band",
+      "source": "./plugins/usage-band",
+      "description": "Uma linha acima do prompt: uso das 5 h com previsão de quando acaba, renovação, contexto, cache e o 🦀 Clawd"
+    },
+    {
+      "name": "clawd",
+      "source": "./plugins/clawd",
+      "description": "Descontinuado: o Clawd agora vem dentro do usage-band"
+    }
   ]
 }

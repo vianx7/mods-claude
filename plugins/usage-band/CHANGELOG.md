@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.0: uma linha só, com o Clawd dentro
+
+```
+5h ━━━━━━━━┃━━━━━━━── 94% ↗ esgota 12:12    Renova em 1h46    (62)    ● Quente    🦀⌄
+```
+
+- **Corrigido: a faixa nunca mais quebra em duas linhas.** O Claude Code desenha uma linha para cada mod, então o 🦀 do plugin separado sempre caía embaixo. Agora o Clawd mora dentro deste mod, no fim da mesma linha.
+- **Novo: previsão de quando o limite acaba.** Quando o ritmo está acelerado e o limite vai acabar antes da renovação, o ritmo mostra a hora (`↗ esgota 12:12`). No ritmo tranquilo, o cartão diz com quanto a janela deve fechar (ex.: ~46%).
+- **Novo: marca do "agora" na barra.** Um traço mostra quanto da janela de 5 h já passou: se o preenchimento estiver à frente da marca, você está gastando mais rápido que o ritmo uniforme.
+- **A barra ocupa a sobra da linha,** sem buracos vazios.
+- **Caranguejo novo:** desenho vetorial próprio que pisca, mexe as pinças quando está pensando e fica cinza quando desligado. O `⌄` ao lado abre o menu. No terminal continua o 🦀.
+- **Alerta do Clawd** ocupa a linha (continua uma só) com o caranguejo, a mensagem e os botões.
+- O plugin `clawd` separado foi descontinuado: pode desinstalar.
+
 ## 1.0.1: a versão final
 
 Uma linha só, acima da caixa de texto do Claude Code, com tudo o que importa sobre a janela de 5 horas:

@@ -98,3 +98,11 @@ Publicar no GitHub **não** atualiza as instalações sozinho:
 
 - **Computador:** rode `claude plugin marketplace update mods-claude && claude plugin update usage-band@mods-claude` e reinicie o Claude Code. Outra opção é ligar o auto-update em `/plugin` → Marketplaces → mods-claude.
 - **Nuvem:** sessões novas que instalam o mod pelo Setup script já pegam a versão mais recente.
+
+## 🦀 Clawd (no fim da linha)
+
+Observador silencioso que entende prompts ditados por voz e só aparece nas horas cruciais.
+
+- **Clique no caranguejo (ou no `⌄`)** para abrir o menu: ligar/desligar, modo (Economia, Sempre, Só grátis), economia de tokens, gastos e últimos avisos.
+- **`/clawd`** abre o menu; **`/clawd off`** e **`/clawd on`** desligam e ligam.
+- Em conversa grande e fria (mais de 1 h sem resposta), segura o envio e oferece compactar antes, para não reler tudo sem desconto.

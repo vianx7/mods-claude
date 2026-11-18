@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   classifyPace, fmtShort, freshness, needed, paceRatio, pickTier, ringSvg, dotSvg, barSvg,
-  slotLabels, temperature,
+  slotLabels, temperature, project, paceLabel, barRuns, barCells, elapsedFrac,
 } from '../hooks/register'
 
 declare const console: { log: (...a: unknown[]) => void }
@@ -127,7 +127,7 @@ describe('anel de contexto', () => {
 
 describe('movimento reduzido', () => {
   test('animações desligadas por prefers-reduced-motion', () => {
-    for (const s of [barSvg({ from: 10, to: 60, at: 0 }, 12), dotSvg(temperature(NOW, true, NOW), true)]) {
+    for (const s of [barSvg({ from: 10, to: 60, at: 0 }, 12, 0.5), dotSvg(temperature(NOW, true, NOW), true)]) {
       expect(s.includes('prefers-reduced-motion')).toBe(true)
     }
   })
@@ -175,6 +175,7 @@ type Scenario = {
   slot?: number
   weekSlot?: number
   now?: number
+  alert?: unknown
 }
 
 const mount = async ($: any, on: any, s: Scenario) => {
@@ -194,6 +195,11 @@ const mount = async ($: any, on: any, s: Scenario) => {
     weekSlot: s.weekSlot ?? 0,
     pace: { level: s.pace ?? 'elevated', window: FIVE.resetsAt },
     focusKey: s.focus ?? null,
+    clawdAlert: s.alert ?? null,
+    runningTurn: null,
+    clawdThinking: false,
+    bypassOnce: false,
+    clawdLog: [],
   }
   on('state.get', (_: any, e: any) => ({ value: { value: values[e.key], version: 1 } }))
   return $.ui.mount({
@@ -263,7 +269,7 @@ for (const [level, glyph] of [['normal', '→'], ['elevated', '↗'], ['high', '
   test(`ritmo ${level} → ${glyph}`, async ($, on) => {
     const ui = await mount($, on, { columns: 120, pace: level })
     const b: any = await ui.find({ type: 'Button', key: 'pace' })
-    expect(visible(b)).toBe(glyph)
+    expect(visible(b).startsWith(glyph)).toBe(true)
     await ui.unmount()
   })
 }
@@ -335,7 +341,7 @@ test('foco pelo teclado mostra o cartão de detalhes, sem mudar a altura', async
   const shown = cards.filter((c: any) => c.props.display === 'flex')
   expect(shown.length).toBe(1)
   expect(shown[0].props.top).toBe(0)
-  expect(visible({ ...shown[0], props: {} })).toBe('Ritmo elevado')
+  expect(visible({ ...shown[0], props: {} }).startsWith('Ritmo elevado')).toBe(true)
   // Todos os cartões revelam por hover no mesmo escopo do item.
   expect(cards.filter((c: any) => c.props.display === 'none').every((c: any) => c.hover?.display === 'flex' && c.hover?.scope)).toBe(true)
   await ui.unmount()
@@ -386,37 +392,57 @@ for (const [name, sc] of EXTRA) {
   })
 }
 
-test('cede a linha para um alerta do Clawd e só para ele', async ($, on) => {
-  on('ui.render', ($: any, e: any) => {
-    const { Box, Text } = $.ui.resolve(e)
-    return <Box key="clawd-alert"><Text>🦀 Clawd: alerta</Text></Box>
-  })
-  const ui = await mount($, on, { columns: 120 })
-  expect(JSON.stringify(await ui.drawn()).includes('🦀 Clawd: alerta')).toBe(true)
+test('alerta do Clawd ocupa a linha (uma só) enquanto dura', async ($, on) => {
+  const ui = await mount($, on, { columns: 120, surface: 'desktop', alert: { kind: 'fix', message: 'Você disse deletar, mas a conversa é sobre deploy.', corrected: 'Faça o deploy.', at: NOW } })
+  const tree: any = await dump('desktop-alerta', ui)
+  expect(tree.props.key).toBe('clawd-alert')
+  expect(tree.props.flexWrap).toBe('nowrap')
+  expect(JSON.stringify(tree).includes('Você disse deletar')).toBe(true)
   await ui.unmount()
 })
 
-test('qualquer outro desenho embaixo não toma a faixa', async ($, on) => {
-  on('ui.render', ($: any, e: any) => {
-    const { Text } = $.ui.resolve(e)
-    return <Text>outra coisa</Text>
-  })
-  const ui = await mount($, on, { columns: 120 })
-  const s = JSON.stringify(await ui.drawn())
-  expect(s.includes('outra coisa')).toBe(false)
-  expect(s.includes('94%')).toBe(true)
-  await ui.unmount()
+test('a barra cresce com a sobra da linha, sem quebrar', async ($, on) => {
+  const m = baseModel()
+  const small = barCells(m, 'wide', needed(m, 'wide'))
+  const big = barCells(m, 'wide', needed(m, 'wide') + 100)
+  expect(small).toBe(12)
+  expect(big).toBe(32)
+  expect(barCells(m, 'narrow', 200)).toBe(0)
 })
 
-test('o 🦀 do Clawd entra no fim da mesma linha', async ($, on) => {
-  on('ui.render', ($: any, e: any) => {
-    const { Box, Text } = $.ui.resolve(e)
-    return <Box key="clawd-crab"><Text>🦀</Text></Box>
+describe('previsão no ritmo atual', () => {
+  test('94% em 3h14: o limite acaba antes de renovar', () => {
+    const p = project(FIVE, NOW)!
+    expect(p.exhaustAt).not.toBe(null)
+    // começo da janela + 3h14 × 100/94 ≈ 3h26 → 12 min a partir de agora
+    expect(Math.round((p.exhaustAt! - NOW) / 60_000)).toBe(12)
   })
-  const ui = await mount($, on, { columns: 120 })
-  const tree: any = await ui.drawn()
-  expect(tree.props.key).toBe('usage-band-row')
-  const last = JSON.stringify(tree.children.filter((c: any) => c?.props?.position !== 'absolute').at(-1))
-  expect(last.includes('🦀')).toBe(true)
+  test('ritmo tranquilo: sem horário de esgotar, mostra o fechamento', () => {
+    const calm = { percentUsed: 30, resetsAt: FIVE.resetsAt }
+    const p = project(calm, NOW)!
+    expect(p.exhaustAt).toBe(null)
+    expect(Math.round(p.endPct)).toBe(46)
+  })
+  test('rótulo do ritmo com horário só quando acelerado', () => {
+    const p = project(FIVE, NOW)!
+    expect(paceLabel(baseModel({ exhaustAt: p.exhaustAt, paceLevel: 'high' }), 'wide')).toMatch(/^↑ esgota \d\d:\d\d$/)
+    expect(paceLabel(baseModel({ exhaustAt: p.exhaustAt, paceLevel: 'high' }), 'narrow')).toBe('↑')
+    expect(paceLabel(baseModel({ exhaustAt: null, paceLevel: 'high' }), 'wide')).toBe('↑')
+  })
+  test('marca do agora na barra de texto', () => {
+    const runs = barRuns(50, 10, 0.25)
+    expect(runs.map(r => r.text).join('')).toBe('━━┃━━─────')
+    expect(runs.filter(r => r.kind === 'mark').length).toBe(1)
+    expect(elapsedFrac(FIVE, NOW)! > 0.6).toBe(true)
+  })
+})
+
+test('o cartão do ritmo diz quando o limite acaba', async ($, on) => {
+  const ui = await mount($, on, { columns: 120, focus: 'pace', pace: 'high' })
+  const cards = (await ui.drawn()).children.filter((c: any) => c?.props?.position === 'absolute' && c.props.display === 'flex')
+  const t = visible({ ...cards[0], props: {} })
+  console.log('cartão ritmo:', t)
+  expect(t.includes('o limite acaba às')).toBe(true)
+  expect(t.includes('antes de renovar')).toBe(true)
   await ui.unmount()
 })

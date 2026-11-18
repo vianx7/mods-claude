@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { cleanContext, excerpt, fmtTokens, parseJson, validDeep, validTriage, wordCount, worthTriage } from '../hooks/register'
+import { cleanContext, excerpt, fmtTokens, parseJson, validDeep, validTriage, wordCount, worthTriage } from '../hooks/clawd'
 
 declare const console: { log: (...a: unknown[]) => void }
 
@@ -58,7 +58,7 @@ describe('pré-filtro grátis', () => {
 
 // ------------------------------------------------------------------
 
-type Opts = { triage?: string; deep?: string; store?: Record<string, unknown>; ctxTokens?: number; beneath?: 'text' | 'usage' }
+type Opts = { triage?: string; deep?: string; store?: Record<string, unknown>; ctxTokens?: number }
 type Calls = { fork: number; complete: number; seen: any; filled: string; submitted: string[]; compacted: number; opened: string }
 
 const setup = (on: any, o: Opts = {}): Calls => {
@@ -80,16 +80,17 @@ const setup = (on: any, o: Opts = {}): Calls => {
   on('prompt.fill', (_: any, e: any) => { calls.filled = e.text; return { isFilled: true } })
   on('prompt.submit', (_: any, e: any) => { calls.seen = e; calls.submitted.push(e.text); return { text: e.text } })
   on('ui.render', ($: any, e: any) => {
-    const { Box, Text } = $.ui.resolve(e)
-    return o.beneath === 'usage'
-      ? <Box key="usage-band-row" flexDirection="row"><Text>5h 94%</Text><Text>◉</Text></Box>
-      : <Text>faixa de baixo</Text>
+    const { Text } = $.ui.resolve(e)
+    return <Text>faixa de baixo</Text>
   })
   return calls
 }
 
+// O teste também desenha uma linha (o mock de ui.render), então a faixa vem empilhada.
+const row = (tree: any): any => (tree?.props?.key ? tree : (tree?.children ?? []).find((c: any) => c?.props?.key))
+
 const band = ($: any, surface: 'terminal' | 'desktop' = 'desktop', isWorking = true) =>
-  $.ui.mount({ plugin: 'clawd', component: 'AbovePrompt', surface, props: { hasSurvey: false, isWorking, maxRows: 10, bodyColumns: 100 } } as any)
+  $.ui.mount({ plugin: 'usage-band', component: 'AbovePrompt', surface, props: { hasSurvey: false, isWorking, maxRows: 10, bodyColumns: 100 } } as any)
 
 test('economia: prompt limpo não gasta nada', async ($, on) => {
   const c = setup(on)
@@ -108,20 +109,20 @@ test('economia: ditado confuso anexa a interpretação limpa, sem mudar o texto'
 })
 
 test('modo "sempre": até prompt limpo passa pela triagem', async ($, on) => {
-  const c = setup(on, { store: { mode: 'always' } })
+  const c = setup(on, { store: { 'clawd:mode': 'always' } })
   await $.prompt.submit({ text: CLEAN } as any)
   expect(c.complete).toBe(1)
 })
 
 test('modo "só grátis": nunca chama modelo', async ($, on) => {
-  const c = setup(on, { triage: TRIAGE_CHECK, store: { mode: 'free' } })
+  const c = setup(on, { triage: TRIAGE_CHECK, store: { 'clawd:mode': 'free' } })
   await $.prompt.submit({ text: DICTATED } as any)
   expect(c.complete).toBe(0)
   expect(c.fork).toBe(0)
 })
 
 test('desligado: não faz nada', async ($, on) => {
-  const c = setup(on, { triage: TRIAGE_CHECK, store: { enabled: false } })
+  const c = setup(on, { triage: TRIAGE_CHECK, store: { 'clawd:enabled': false } })
   await $.prompt.submit({ text: DICTATED } as any)
   expect(c.complete).toBe(0)
 })
@@ -132,7 +133,7 @@ test('suspeita crucial: análise profunda e alerta na faixa', async ($, on) => {
   await tick()
   expect(c.fork).toBe(1)
   const ui = await band($)
-  const tree: any = await ui.drawn()
+  const tree: any = row(await ui.drawn())
   expect(tree.props.key).toBe('clawd-alert')
   expect(JSON.stringify(tree).includes('Você disse deletar')).toBe(true)
   await ui.unmount()
@@ -144,8 +145,9 @@ test('suspeita descartada: fica quieto e só mostra o 🦀', async ($, on) => {
   await tick()
   expect(c.fork).toBe(1)
   const ui = await band($)
-  const tree: any = await ui.drawn()
-  expect(tree.props.key).toBe('clawd-crab')
+  const tree: any = row(await ui.drawn())
+  expect(tree.props.key).toBe('usage-band-row')
+  expect(JSON.stringify(tree).includes('clawd-crab-btn')).toBe(true)
   await ui.unmount()
 })
 
@@ -202,7 +204,7 @@ test('conversa fria mas pequena: não segura', async ($, on) => {
 })
 
 test('aviso de conversa fria desligado no menu: não segura', async ($, on) => {
-  const c = setup(on, { store: { ...coldStore, coldGuard: false }, ctxTokens: 120_000 })
+  const c = setup(on, { store: { ...coldStore, 'clawd:coldGuard': false }, ctxTokens: 120_000 })
   await $.prompt.submit({ text: CLEAN } as any)
   expect(c.submitted).toEqual([CLEAN])
 })
@@ -211,14 +213,38 @@ test('aviso de conversa fria desligado no menu: não segura', async ($, on) => {
 // 🦀 e menu
 // ------------------------------------------------------------------
 
-test('o 🦀 entra no fim da linha da faixa de uso', async ($, on) => {
-  setup(on, { beneath: 'usage' })
-  const ui = await band($)
-  const tree: any = await ui.drawn()
-  expect(tree.props.key).toBe('usage-band-row+clawd')
-  expect(JSON.stringify(tree.children.at(-1)).includes('clawd-crab-btn')).toBe(true)
-  expect(JSON.stringify(tree).includes('5h 94%')).toBe(true)
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: o 🦀 é o último item da MESMA linha da faixa`, async ($, on) => {
+    setup(on)
+    const ui = await band($, surface, false)
+    const tree: any = row(await ui.drawn())
+    expect(tree.props.key).toBe('usage-band-row')
+    expect(tree.props.flexDirection).toBe('row')
+    expect(tree.props.flexWrap).toBe('nowrap')
+    const inline = tree.children.filter((ch: any) => ch?.props?.position !== 'absolute')
+    expect(JSON.stringify(inline.at(-1)).includes('clawd-crab-btn')).toBe(true)
+    await ui.unmount()
+  })
+}
+
+test('desligado: o 🦀 continua lá, apagado, para religar pelo menu', async ($, on) => {
+  setup(on, { store: { 'clawd:enabled': false } })
+  const ui = await band($, 'desktop', false)
+  const s = JSON.stringify(await ui.drawn())
+  expect(s.includes('Clawd desligado')).toBe(true)
   await ui.unmount()
+})
+
+test('/clawd off e on', async ($, on) => {
+  const c = setup(on, { triage: TRIAGE_CHECK })
+  const off: any = await $.command.run({ command: 'clawd', args: 'off' } as any)
+  console.log('off:', JSON.stringify(off))
+  await $.prompt.submit({ text: DICTATED } as any)
+  expect(c.complete).toBe(0)
+  await $.command.run({ command: 'clawd', args: 'on' } as any)
+  await $.prompt.submit({ text: DICTATED } as any)
+  expect(c.complete).toBe(1)
+  await tick() // deixa a análise de fundo terminar antes do fim do teste
 })
 
 test('clicar no 🦀 abre o menu', async ($, on) => {
@@ -230,13 +256,14 @@ test('clicar no 🦀 abre o menu', async ($, on) => {
 })
 
 test('menu mostra modo, economia, gastos e avisos', async ($, on) => {
-  setup(on, { store: { stats: { triaged: 12, skipped: 30, deep: 2, alerts: 1, coldHolds: 1, tokens: 15_400 } } })
+  setup(on, { store: { 'clawd:stats': { triaged: 12, skipped: 30, deep: 2, alerts: 1, coldHolds: 1, tokens: 15_400 } } })
   const ui = await $.ui.mount({
-    plugin: 'clawd', component: 'Pane', requestId: 'clawd-menu', surface: 'desktop',
+    plugin: 'usage-band', component: 'Pane', requestId: 'clawd-menu', surface: 'desktop',
     props: { title: '🦀 Clawd', isFocused: false, bodyColumns: 50, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
   } as any)
   const s = JSON.stringify(await ui.drawn())
-  for (const t of ['Observando', 'Economia', 'Sempre', 'Só grátis', 'Compactar conversa agora', '12 triagens', '30 puladas de graça', '~15k tokens', 'Em breve']) {
+  for (const t of ['Observando', 'Economia', 'Sempre', 'Só grátis', 'Compactar conversa agora', '12 triagens', '30 puladas de graça', '~15k tokens', 'EM BREVE']) {
+    if (!s.includes(t)) console.log('faltou no menu:', t)
     expect(s.includes(t)).toBe(true)
   }
   const keys = (await ui.findAll({ type: 'Button' })).map((b: any) => b.key)

@@ -1,12 +1,10 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderChildren, RenderElement, SessionRateLimit, SessionUsage, Timer } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren, SessionRateLimit, SessionUsage, Timer } from 'claude-code'
 
-import type { Failure, Fill, Limit, PaceLevel, PaceState, Usage } from '../types'
+import type { Alert, Failure, Fill, Limit, PaceLevel, PaceState, Usage } from '../types'
+import { alertRow, clawdCommand, clawdSubmit, crabButton, menuPane, MENU, NAME } from './clawd'
 
-// =====================================================================
-// Estado ($.state; sobrevive a recargas do mod dentro da sessão)
-// =====================================================================
-
+// $.state: sobrevive a recargas do mod dentro da sessão.
 const usage = atom({ plugin: 'usage-band', key: 'usage' } as const, { five: null, week: null } as Usage)
 const hasContext = atom({ plugin: 'usage-band', key: 'hasContext' } as const, false)
 const ctxPercent = atom({ plugin: 'usage-band', key: 'ctxPercent' } as const, null as number | null)
@@ -16,10 +14,11 @@ const failure = atom({ plugin: 'usage-band', key: 'failure' } as const, null as 
 const tick = atom({ plugin: 'usage-band', key: 'tick' } as const, 0)
 const fill = atom({ plugin: 'usage-band', key: 'fill' } as const, { from: 0, to: 0, at: 0 } as Fill)
 const pulse = atom({ plugin: 'usage-band', key: 'pulse' } as const, false)
-// Preferência já existente: qual informação o botão da renovação das 5 h mostra.
 const slot = atom({ plugin: 'usage-band', key: 'slot' } as const, 0)
 const pace = atom({ plugin: 'usage-band', key: 'pace' } as const, { level: 'calculating', window: null } as PaceState)
 const focusKey = atom({ plugin: 'usage-band', key: 'focusKey' } as const, null as string | null)
+const clawdAlert = atom({ plugin: 'usage-band', key: 'clawdAlert' } as const, null as Alert | null)
+const runningTurn = atom({ plugin: 'usage-band', key: 'runningTurn' } as const, null as string | null)
 
 // =====================================================================
 // Constantes
@@ -49,6 +48,7 @@ const ICE = '#64D2FF'
 const GRAY = '#8E8E93'
 const CARD_BG = '#2C2C2E'
 const CARD_FG = '#F2F2F7'
+const CRAB_COLS = 4
 
 // =====================================================================
 // Formatação
@@ -120,6 +120,29 @@ export const classifyPace = (prev: PaceLevel, r: number | null): PaceLevel => {
   if (rank(up) >= rank(p)) return up
   if (p === 'high') return r < PACE_UP.high - PACE_HYSTERESIS ? (r < PACE_UP.elevated - PACE_HYSTERESIS ? 'normal' : 'elevated') : 'high'
   return r < PACE_UP.elevated - PACE_HYSTERESIS ? 'normal' : 'elevated'
+}
+
+/**
+ * Projeção no ritmo atual: com quanto a janela termina e, se passar de 100%,
+ * a que horas o limite acaba (antes da renovação). null sem histórico.
+ */
+export type Projection = { endPct: number; exhaustAt: number | null; elapsed: number }
+export const project = (five: Limit, now: number): Projection | null => {
+  const reset = five.resetsAt ? Date.parse(five.resetsAt) : NaN
+  if (!Number.isFinite(reset) || reset <= now) return null
+  const start = reset - WINDOW_MS
+  const elapsed = (now - start) / WINDOW_MS
+  if (elapsed < PACE_MIN_ELAPSED || five.percentUsed <= 0) return elapsed >= PACE_MIN_ELAPSED ? { endPct: 0, exhaustAt: null, elapsed } : null
+  const endPct = five.percentUsed / elapsed
+  const exhaustAt = five.percentUsed < 100 && endPct > 100 ? start + (now - start) * (100 / five.percentUsed) : null
+  return { endPct, exhaustAt, elapsed }
+}
+
+/** Fração da janela de 5 h já passada (a "marca do agora" na barra). */
+export const elapsedFrac = (five: Limit | null, now: number): number | null => {
+  const reset = five?.resetsAt ? Date.parse(five.resetsAt) : NaN
+  if (!Number.isFinite(reset)) return null
+  return Math.min(1, Math.max(0, 1 - (reset - now) / WINDOW_MS))
 }
 
 const PACE_VIEW: Record<PaceLevel, { glyph: string; color: string; name: string }> = {
@@ -198,6 +221,16 @@ type Model = {
   slotIdx: number
   temp: Temp
   fiveFresh: Freshness
+  /** Hora em que o limite acaba no ritmo atual, se antes da renovação. */
+  exhaustAt: number | null
+}
+
+/** Rótulo do ritmo: a seta e, quando o limite acaba antes de renovar, o horário. */
+export const paceLabel = (m: Model, tier: Tier): string => {
+  const g = PACE_VIEW[m.paceLevel].glyph
+  return m.exhaustAt !== null && m.paceLevel !== 'normal' && m.paceLevel !== 'calculating' && (tier === 'wide' || tier === 'medium')
+    ? `${g} ${tier === 'wide' ? 'esgota ' : ''}${clockTime(new Date(m.exhaustAt).toISOString())}`
+    : g
 }
 
 /** As duas opções do botão de renovação das 5 h, por nível. */
@@ -222,7 +255,7 @@ export const reserve = (m: Model, tier: Tier) => {
     fiveLabel: 2,
     bar: BAR_CELLS[tier],
     pct: 4, // "100%"
-    paceG: 1,
+    paceG: tier === 'wide' ? 14 : tier === 'medium' ? 7 : 1, // "↑ esgota 04:10" / "↑ 04:10"
     fresh: 1,
     slot: maxLen(slotLabels(m, tier)),
     ctx: 3,
@@ -241,6 +274,14 @@ export const needed = (m: Model, tier: Tier): number => {
 
 export const pickTier = (m: Model, columns: number): Tier => TIERS.find(t => needed(m, t) <= columns) ?? 'tight'
 
+/** A barra cresce com a sobra da linha (até um teto), para a faixa ficar contínua. */
+const BAR_MAX_EXTRA: Record<Tier, number> = { wide: 20, medium: 4, narrow: 0, tight: 0 }
+export const barCells = (m: Model, tier: Tier, columns: number): number => {
+  const base = BAR_CELLS[tier]
+  if (!base) return 0
+  return base + Math.max(0, Math.min(BAR_MAX_EXTRA[tier], columns - needed(m, tier)))
+}
+
 // =====================================================================
 // SVG (app desktop): barra, anel de contexto e bolinha do cache
 // Animações em CSS, desligadas com prefers-reduced-motion.
@@ -248,15 +289,39 @@ export const pickTier = (m: Model, columns: number): Tier => TIERS.find(t => nee
 
 const NO_MOTION = '@media (prefers-reduced-motion: reduce){*{animation:none!important}}'
 
-export const barSvg = (f: Fill, cells: number) => {
-  const W = cells * 8
+const CELL_PX = 7
+
+/** Barra das 5 h: trilho, preenchimento animado e a marca do "agora" na janela. */
+export const barSvg = (f: Fill, cells: number, now: number | null) => {
+  const W = cells * CELL_PX
   const to = (Math.min(100, Math.max(0, f.to)) / 100) * W
   const from = (Math.min(100, Math.max(0, f.from)) / 100) * W
   const anim = to > 0 && from !== to
-  const style = anim
-    ? `<style>.f{transform-origin:0 0;animation:g ${FILL_MS}ms cubic-bezier(.2,.8,.2,1) both}@keyframes g{from{transform:scaleX(${(from / to).toFixed(3)})}}${NO_MOTION}</style>`
+  const css = anim
+    ? `.f{transform-origin:0 0;animation:g ${FILL_MS}ms cubic-bezier(.2,.8,.2,1) both}@keyframes g{from{transform:scaleX(${(from / to).toFixed(3)})}}`
     : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="8" viewBox="0 0 ${W} 8">${style}<rect x="0" y="2" width="${W}" height="4" rx="2" fill="${GRAY}" fill-opacity="0.28"/><rect class="f" x="0" y="2" width="${to.toFixed(1)}" height="4" rx="2" fill="${barColor(f.to)}"/></svg>`
+  // Marca do agora: onde o consumo "deveria" estar num ritmo uniforme.
+  const x = now === null ? null : Math.min(W - 1, Math.max(1, now * W))
+  const mark = x === null ? '' : `<rect class="m" x="${(x - 0.75).toFixed(1)}" y="0" width="1.5" height="10" rx=".75"/>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="10" viewBox="0 0 ${W} 10"><style>${css}.m{fill:#1C1C1E;fill-opacity:.55}@media (prefers-color-scheme:dark){.m{fill:#F2F2F7;fill-opacity:.7}}${NO_MOTION}</style>` +
+    `<rect x="0" y="2.5" width="${W}" height="5" rx="2.5" fill="${GRAY}" fill-opacity="0.25"/>` +
+    `<rect class="f" x="0" y="2.5" width="${to.toFixed(1)}" height="5" rx="2.5" fill="${barColor(f.to)}"/>${mark}</svg>`
+}
+
+/** A mesma barra em texto (terminal), em trechos: ━ usado, ─ livre, ┃ o agora. */
+export type BarRun = { kind: 'used' | 'free' | 'mark'; text: string }
+export const barRuns = (shownPct: number, cells: number, now: number | null): BarRun[] => {
+  const filled = Math.max(0, Math.min(cells, Math.round((shownPct / 100) * cells)))
+  const markAt = now === null ? -1 : Math.min(cells - 1, Math.max(0, Math.floor(now * cells)))
+  const runs: BarRun[] = []
+  for (let i = 0; i < cells; i++) {
+    const kind: BarRun['kind'] = i === markAt ? 'mark' : i < filled ? 'used' : 'free'
+    const ch = kind === 'mark' ? '┃' : kind === 'used' ? '━' : '─'
+    const last = runs[runs.length - 1]
+    if (last && last.kind === kind) last.text += ch
+    else runs.push({ kind, text: ch })
+  }
+  return runs
 }
 
 export const ringSvg = (pct: number | null) => {
@@ -362,14 +427,14 @@ async function absorb($: EngineInterface, u: Pick<SessionUsage, 'rateLimits' | '
     const shown = cur.from + (cur.to - cur.from) * Math.min(1, Math.max(0, (now - cur.at) / FILL_MS))
     await update($, fill, () => ({ from: shown, to: target, at: now }))
     fillTimer?.cancel()
-    fillTimer = $.clock.every(50, async () => {
+    fillTimer = $.clock.every(50, () => void (async () => {
       await update($, tick, n => n + 1)
       if ((await $.clock.now()) - now > FILL_MS) {
         fillTimer?.cancel()
         fillTimer = null
         await update($, fill, f => ({ ...f, from: f.to }))
       }
-    })
+    })().catch(() => {}))
   }
   await checkAlerts($, next, (await read($, pace)).level)
 }
@@ -384,7 +449,7 @@ async function markReply($: EngineInterface) {
 
 async function startPulse($: EngineInterface) {
   pulseTimer?.cancel()
-  pulseTimer = $.clock.every(700, () => update($, pulse, p => !p))
+  pulseTimer = $.clock.every(700, () => void update($, pulse, p => !p).catch(() => {}))
 }
 
 async function stopPulse($: EngineInterface) {
@@ -396,7 +461,7 @@ async function stopPulse($: EngineInterface) {
 async function showCard($: EngineInterface, key: string | null) {
   await update($, focusKey, () => key)
   focusTimer?.cancel()
-  focusTimer = key ? $.clock.after(FOCUS_CARD_MS, () => update($, focusKey, () => null)) : null
+  focusTimer = key ? $.clock.after(FOCUS_CARD_MS, () => void update($, focusKey, () => null).catch(() => {})) : null
 }
 
 async function cycleSlot($: EngineInterface) {
@@ -416,6 +481,9 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     try {
+      await $.command.register({ name: 'clawd', description: `${NAME}, o observador: /clawd (menu) | on | off` })
+    } catch {}
+    try {
       await absorb($, await $.session.usage(), false)
     } catch {
       const t = await $.clock.now()
@@ -428,7 +496,7 @@ export const register: Register = on => {
       const s = await $.store.get('pref:slot')
       if (typeof s === 'number') await update($, slot, () => s)
     } catch {}
-    $.clock.every(MIN, () => update($, tick, n => n + 1))
+    $.clock.every(MIN, () => void update($, tick, n => n + 1).catch(() => {}))
     return result
   })
 
@@ -438,8 +506,17 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    await startPulse($)
+    const result = await clawdSubmit($, e, next)
+    // Segurado pelo Clawd: nada foi enviado, então nada de pulso.
+    if (!(result && typeof result === 'object' && 'drop' in result)) await startPulse($)
     await showCard($, null)
+    return result as Awaited<ReturnType<typeof next>>
+  })
+
+  on('command.run', { command: 'clawd' }, async ($, e) => clawdCommand($, e.args))
+
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) await update($, runningTurn, () => e.turnId)
     return next(e)
   })
 
@@ -452,6 +529,7 @@ export const register: Register = on => {
         await markReply($)
       }
       await stopPulse($)
+      await update($, runningTurn, () => null)
     }
     return next(e)
   })
@@ -469,26 +547,22 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    // O Clawd (observador) pode estar desenhando abaixo deste plugin:
-    // - um alerta crucial: a faixa cede a linha, só enquanto o alerta dura;
-    // - o 🦀 do menu: entra no fim desta mesma linha.
-    let crab: RenderElement | null = null
-    try {
-      const below = await next(e)
-      const key = below && typeof below === 'object' ? (below as { props?: { key?: string } }).props?.key : undefined
-      if (key === 'clawd-alert') return below
-      if (key === 'clawd-crab') crab = below
-    } catch {}
+    const els = $.ui.resolve(e)
+    const { Box, Text, Button } = els
+    // O terminal não desenha SVG: lá barra, anel, bolinha e 🦀 são texto.
+    const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
+    const E = { Box, Text, Button, Svg }
+
+    // Alerta crucial do Clawd: ocupa a linha (continua uma linha só) enquanto dura.
+    const a = await read($, clawdAlert)
+    if (a) return alertRow($, E, a, e.props.bodyColumns)
+    const crab = await crabButton($, E)
     const [u, ctxFilled, ctxPct, last, measured, fail, f, beat, slotIdx, paceState, focused] = await Promise.all([
       read($, usage), read($, hasContext), read($, ctxPercent), read($, lastReply), read($, lastMeasure),
       read($, failure), read($, fill), read($, pulse), read($, slot), read($, pace), read($, focusKey),
     ])
     await read($, tick)
     const now = await $.clock.now()
-    const els = $.ui.resolve(e)
-    const { Box, Text, Button } = els
-    // O terminal não desenha SVG: lá barra, anel e bolinha são texto.
-    const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
     const working = e.props.isWorking
 
     const fiveFresh = freshness(u.five, measured, fail, working, now)
@@ -497,10 +571,16 @@ export const register: Register = on => {
       now, five: u.five, ctx: ctxPct,
       paceLevel: u.five && fiveFresh === 'ok' ? paceState.level : 'calculating',
       slotIdx, temp, fiveFresh,
+      exhaustAt: null,
     }
-    // No desktop os botões são nativos e ocupam mais que as células do texto.
-    const tier = pickTier(model, e.props.bodyColumns - (Svg ? 12 : 0) - (crab ? 4 : 0))
-    const r = reserve(model, tier)
+    const proj = u.five && fiveFresh === 'ok' ? project(u.five, now) : null
+    model.exhaustAt = proj?.exhaustAt ?? null
+    // No desktop os botões são nativos e ocupam mais que as células do texto;
+    // o 🦀 fica sempre no fim da mesma linha.
+    const cols = e.props.bodyColumns - (Svg ? 12 : 0) - CRAB_COLS
+    const tier = pickTier(model, cols)
+    const r = { ...reserve(model, tier), bar: barCells(model, tier, cols) }
+    const nowFrac = fiveFresh === 'ok' ? elapsedFrac(u.five, now) : null
     const wide = tier === 'wide'
     const updated = ago(measured, now)
 
@@ -514,9 +594,17 @@ export const register: Register = on => {
     const join = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(' · ')
     const details: Record<string, string> = {
       five: u.five
-        ? join(`Janela de 5 h: ${fivePct} usado`, FRESH_VIEW[fiveFresh].note, updated)
+        ? join(`Janela de 5 h: ${fivePct} usado`, nowFrac !== null && `a marca mostra o agora (${Math.round(nowFrac * 100)}% da janela já passou)`, FRESH_VIEW[fiveFresh].note, updated)
         : noFive,
-      pace: u.five ? (fiveFresh === 'ok' ? paceV.name : 'Ritmo: indisponível até a próxima leitura') : 'Ritmo: sem dados da janela de 5 h',
+      pace: !u.five
+        ? 'Ritmo: sem dados da janela de 5 h'
+        : fiveFresh !== 'ok'
+          ? 'Ritmo: indisponível até a próxima leitura'
+          : !proj
+            ? paceV.name
+            : proj.exhaustAt !== null
+              ? join(paceV.name, `no ritmo atual o limite acaba às ${clockTime(new Date(proj.exhaustAt).toISOString())}`, u.five.resetsAt && `${fmtLong(Math.max(0, Math.round((Date.parse(u.five.resetsAt) - proj.exhaustAt) / MIN)))} antes de renovar`)
+              : join(paceV.name, `no ritmo atual a janela fecha em ~${Math.min(100, Math.round(proj.endPct))}%`),
       slot: u.five?.resetsAt
         ? join(
           fiveLeft === 0 ? `Renovação das 5 h: renovou às ${clockTime(u.five.resetsAt)}` : `Renovação das 5 h: às ${clockTime(u.five.resetsAt)}, em ${fmtLong(fiveLeft ?? 0)}`,
@@ -545,17 +633,16 @@ export const register: Register = on => {
     const fiveDim = fiveFresh !== 'ok'
     const shownFill = f.from + (f.to - f.from) * (1 - Math.pow(1 - Math.min(1, Math.max(0, (now - f.at) / FILL_MS)), 3))
     const cells = r.bar
-    const filled = Math.max(0, Math.min(cells, Math.round((shownFill / 100) * cells)))
+    const runColor = { used: themeTint(shownFill), free: 'subtle', mark: 'text' } as const
     const fiveBlock = (
       <Box flexDirection="row" alignItems="center" columnGap={1} flexShrink={0}>
         <Text color="inactive" size="footnote">5h</Text>
         {cells && u.five ? (
           Svg ? (
-            <Svg source={barSvg(f, cells)} alt={`Janela de 5 h: ${fivePct} usado`} />
+            <Svg source={barSvg(f, cells, nowFrac)} alt={`Janela de 5 h: ${fivePct} usado`} />
           ) : (
             <Text dimColor={fiveDim}>
-              <Text color={themeTint(shownFill)}>{'━'.repeat(filled)}</Text>
-              <Text color="subtle">{'─'.repeat(cells - filled)}</Text>
+              {barRuns(shownFill, cells, nowFrac).map((run, i) => <Text key={`run-${i}`} color={runColor[run.kind]}>{run.text}</Text>)}
             </Text>
           )
         ) : null}
@@ -563,7 +650,7 @@ export const register: Register = on => {
           <Button key="five" plain label={fivePct} dimColor={fiveDim} onPress={() => showCard($, 'five')} />, 'flex-end'))}
         {u.five && fiveFresh === 'ok' ? hoverable('pace', fixed(r.paceG,
           <Button key="pace" plain onPress={() => showCard($, 'pace')}>
-            <Text color={paceV.color}>{paceV.glyph}</Text>
+            <Text color={paceV.color}>{paceLabel(model, tier)}</Text>
           </Button>)) : null}
         {freshMark(fiveFresh)}
       </Box>
@@ -593,7 +680,7 @@ export const register: Register = on => {
         )}
         {wide ? (
           <Button key="cache" plain onPress={() => showCard($, 'cache')}>
-            <Text color={temp.color} weight="semibold">{temp.label}</Text>
+            <Text color={temp.color}>{temp.label}</Text>
           </Button>
         ) : null}
       </Box>
@@ -630,5 +717,12 @@ export const register: Register = on => {
         {cards}
       </Box>
     )
+  })
+
+  // Menu do Clawd (painel ao lado do chat), aberto pelo 🦀 ou por /clawd.
+  on('ui.render', { component: 'Pane', requestId: MENU }, async ($, e) => {
+    const els = $.ui.resolve(e)
+    const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
+    return menuPane($, { Box: els.Box, Text: els.Text, Button: els.Button, Svg })
   })
 }
